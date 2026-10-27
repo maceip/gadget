@@ -1,57 +1,165 @@
-# Proactive Personal Agent — Build Plan
+# Proactive Personal Agent — Research Plan
 
-Status: DRAFT — not yet approved for execution. Owner: append updates under
-"Owner updates" at the end of this file, or write `READY TO EXECUTE` there.
+Status: RESEARCH ONLY — no implementation decision has been requested or made.
+Owner: append updates under "Owner updates" at the end of this file, or write
+`READY TO EXECUTE` there when research should move to a next stage the owner names.
 
-## Goal
+Correction record (2026-10-27): an earlier draft of this file recommended
+extending FM in `~/neural` on Android instead of a greenfield build. The
+owner did not request implementation advice, a mobile decision, or a reuse
+decision. That recommendation is withdrawn in full. `~/neural` (FM) and
+`~/cosmo-dev` are research evidence about one attempted architecture, not a
+proposed solution base.
 
-Build a proactive personal agent that acts in the real world outside a sandbox, per [ideation.md](ideation.md). The agent must (1) use standing permission grants instead of per-action approvals, (2) start work proactively across audio, text, and visual input, and (3) learn from errors in a form that transfers to a second user.
+## Research Goal
 
-Top finding from research phase: the `deep-research` workflow completed with “No source-backed claims were found” and wrote no plan file. The plan below uses direct re-research (local `~/neural` and `~/cosmo-dev` inspection, plus inspected 2025–2026 primary sources listed under Sources) instead of workflow output.
+Understand the problem named in [ideation.md](ideation.md) and how other
+people are solving the problem, before any build decision:
 
-## Success Criteria
+1. Agents fail to act proactively and fail to take real actions outside a sandbox.
+2. Permissions default to repeated approvals. The owner rule is narrower:
+   first contact as the owner requires approval; a previously used target, or
+   a message tagged as from the owner's assistant, does not.
+3. Proactivity should work across visual, text, and audio input, starting work
+   while a request is still being formed rather than after a command completes.
+4. Errors and learning: a system that starts imperfect must improve from
+   corrections, and training from one user (the owner) should help a second
+   user (the owner's dad) without assuming a single-user, single-instance model.
 
-- Permission rule from ideation.md holds in code: first external contact as the user requires approval; a known target, or a disclosed-assistant tag on the message, does not.
-- The agent prepares work before an explicit command finishes arriving, and the agent commits no irreversible action during preparation.
-- A correction made by user one measurably improves the same skill for user two, without moving user one personal data to user two device.
-- Every shipped control passes an automated end-to-end device test and a real-device launch check. Compilation alone never counts as done.
+The research areas named by the owner are: Google Scholar work from 2025 and
+2026 only; GitHub projects doing interesting work in the space; and the local
+Cosmo/FM artifacts in `~/cosmo-dev` and `~/neural` as thinking material about
+the problem and one set of attempted solutions. Copy what works is a research
+filter, not an instruction to copy a codebase.
 
-## Approach
+## Out of Scope for This Document
 
-**Reuse base: extend FM in `~/neural`, do not start greenfield, do not copy Cosmo.** Local inspection: `~/neural/README.md` describes FM as a clean-room ambient agent with shipping ambient microphone capture, screen text, notifications, a unified `Gatekeeper`, a 22-skill catalog, a fulfillment runner with confirmation policy, encrypted persistent context, and on-device LLM routing with remote fallback. `~/neural/PLAN.md` states the recovered Cosmo material in `~/cosmo-dev` is reference evidence only, not a work queue. FM lacks exactly the three ideation items: standing grants, proactivity, and cross-user learning. Building the three items into FM reuses proven capture and dispatch; a greenfield agent would rebuild capture and dispatch for no gain.
+- No implementation architecture, stack, framework, or build sequence.
+- No platform decision. Mobile, laptop/desktop, and multi-device operation
+  are all open research questions. The owner notes the described needs could
+  have worked on a laptop; mobile must not be assumed.
+- No greenfield-versus-reuse decision, and no advocacy for `~/neural`, FM,
+  Cosmo, or any GitHub project as a base.
+- No treatment of README capability claims in any repository as proof that a
+  system works or was designed correctly.
 
-**Permissions: capability grants keyed by action class, target identity, and disclosure mode.** First-use approval creates a revocable standing grant. Later sends to the same target, and any send carrying a disclosed-assistant tag, execute without approval. Every grant, execution, and revocation lands in an append-only audit log with an undo window where the channel supports recall. The capability check runs at tool-call time, outside the model, following CaMeL: explicit control/data-flow extraction from the trusted query plus capability enforcement at tool calls, reported at 77% of AgentDojo tasks solved with provable security versus 84% undefended. FM already places a CaMeL trust layer in `docs/architecture.md` §12 with no code yet, per `~/neural/README.md`; Phase 1 writes the CaMeL code. Assumption, reversible: payments and destructive actions never receive standing grants and always require approval. ideation.md does not name payments or destructive actions.
+## Local Evidence and Owner Caveat: Cosmo and FM
 
-**Proactivity: cheap gate first, speculative preparation second, commit last.** FM capture sources feed the existing on-device `Gatekeeper`. A new prediction stage splits the proactive decision into timing prediction and assistance-content generation, the decomposition used by ProAgentBench (2026), where long-term memory and historical context significantly raised prediction accuracy and real-world training data beat synthetic data. Perception runs on demand in tiers — cheap always-on signals first, expensive audio/visual reasoning only after a tier fires — following ProAgent (2025), a proactive system design built around on-demand sensory context. While the user types or speaks, the agent stages reversible preparation only: drafts, lookups, prefilled forms. Commit requires either a standing grant or explicit confirmation. An interruptibility budget caps unsolicited actions per hour, and every proactive offer records accept, reject, or ignore as a label.
+Owner-supplied context for interpreting the local directories:
 
-**Learning: separate personal memory from shared skill and policy.** Personal memory stays on the owner device in the existing encrypted store. Shareable learning consists only of de-identified accept/reject/correction labels, skill success and failure counts, and policy-threshold adjustments. An aggregation step merges shareable learning from opt-in devices into a versioned shared skill/policy bundle; each device downloads the bundle, shadow-tests the bundle against local history, and rolls back on regression. Evidence gap: no primary source for the aggregation mechanism was inspected during research, so the aggregation design stays conditional until Phase 0 research closes the gap. Raw audio, screen content, and message text never enter shareable learning.
+- Cosmo was Google's ambient agent app, publicly available in the Google Play
+  Store. Cosmo never worked for the owner because login was not possible.
+- The owner reverse engineered Cosmo, extracted the Cosmo architecture, and
+  attempted a reimplementation in `~/neural`, named FM.
+- FM was never designed correctly. FM is a partial reverse-engineering attempt.
+- FM is mobile-only.
 
-**External candidate, evaluation only:** the [OpenClaw repository](https://github.com/openclaw/openclaw), titled “The AI that really does things. Any OS. Any Platform.”, is a candidate reference for a real-world action/channel layer. Phase 0 evaluates the OpenClaw repository against FM fulfillment; the plan does not adopt OpenClaw code without a license and architecture review.
+Research use of `~/cosmo-dev` and `~/neural`: study the Cosmo architecture and
+the FM attempt for problem structure — capture sources, directedness gating,
+intent extraction, fulfillment, confirmation, memory, presence — and for
+failure modes of a partial reimplementation. Do not weight FM as a solution
+because FM exists locally. Do not infer a mobile requirement from FM.
 
-## Steps
+## Research Questions
 
-1. **Phase 0 — Evidence closure (research only).** Complete the Google Scholar 2025–2026 sweep named in ideation.md (research inspected arXiv primary sources dated 2025–2026, not Google Scholar result pages — recorded as a gap). Audit `~/cosmo-dev` and `~/neural` fragments into a keep/reference/drop table. Evaluate the OpenClaw repository. Pick the shared-learning aggregation mechanism from a primary source. Exit gate: every material claim in the Phase 0 report traces to an inspected source.
-2. **Phase 1 — Capability permission engine in FM.** Implement grant storage, first-use approval UI wired to persisted grant state, disclosed-assistant tagging, tool-call enforcement, audit log, and revocation. Replace per-action confirmation in the fulfillment runner for granted pairs only.
-3. **Phase 2 — Proactive loop, text and notifications first.** Add timing/content prediction, speculative staging, interruptibility budget, and accept/reject/ignore labeling. No external commit path in Phase 2 beyond Phase 1 grants.
-4. **Phase 3 — Multimodal proactivity.** Extend the proactive loop to ambient audio directedness and screen/visual context already captured by FM, with tiered on-demand perception and per-modality false-trigger budgets.
-5. **Phase 4 — Local learning loop.** Convert corrections and rejected offers into threshold, ranking, and skill-parameter updates on device. Add a personal scorecard: proactive precision, false-trigger rate, correction rate per skill.
-6. **Phase 5 — Cross-user pilot.** Ship opt-in shareable learning and bundle distribution to exactly two users (you, then your dad per ideation.md). Prove transfer on one named skill before widening the pilot.
-7. **Phase 6 — Hardening.** Complete the CaMeL layer for untrusted content (email, web, notifications), run prompt-injection regression cases, and freeze a release gate.
+### 1. Permissions without approval fatigue
 
-## Validation Plan
+- How do recent systems express standing consent: by target, by action class,
+  by disclosure ("sent by an assistant"), by reversibility, by value at risk?
+- What evidence exists that first-use approval plus standing grants stays safe
+  when an agent reads untrusted email, web, and notification content?
+- Where do capability and information-flow designs (for example CaMeL, 2025)
+  succeed or fail at keeping untrusted content from turning into actions?
+- What audit, undo, and revocation patterns do real projects use after an
+  agent sends, posts, calls, or writes as the user?
 
-- Existing FM gates, from `~/neural/PLAN.md`: `scripts/verify-relocation-safety.sh`, `./gradlew detekt lintDebug :app:testDebugUnitTest :app:assembleDebug`, `scripts/run-launch-device-proofs.sh`, `scripts/run-device-core-capability-smoke.sh`.
-- New acceptance tests, each automated and run on a real device: first-contact send blocks for approval and sends after approval; second send to the same target executes without approval; disclosed-assistant send to a new target executes without approval and shows the tag; speculative preparation produces a draft and zero external sends; revoked grant blocks the next send; correction on device one changes shared-bundle behavior on device two with zero personal-data transfer (verified by payload inspection).
-- Highest-risk validation step: Phase 3 false-trigger measurement on real recorded ambient audio and screen sessions. A proactive agent with a high false-trigger rate fails the core complaint in ideation.md even when every unit test passes. ProAgentBench supports real-session evaluation over synthetic evaluation, so the scorecard uses recorded real sessions, not generated scenarios.
+### 2. Proactivity across visual, text, and audio input
+
+- How do 2025–2026 proactive-agent papers define the decision to act:
+  timing, content, interruptibility, confidence, and cost of a false trigger?
+- How do recent systems handle continuous perception without continuous
+  expensive reasoning (for example tiered or on-demand sensing)?
+- What separates speculative preparation (drafts, lookups, staging) from
+  commitment in published systems, and what goes wrong at the boundary?
+- What do benchmarks with real human sessions show that synthetic benchmarks
+  miss about when help is wanted?
+
+### 3. Errors, learning, and transfer to a second user
+
+- What is learned from a correction in recent work: preferences, thresholds,
+  skills, policies, reward models, or shared representations?
+- Which parts of learning are personal, which parts transfer between users,
+  and what privacy mechanisms separate personal data from transferable learning?
+- What evaluation proves transfer helped a second user rather than merely
+  changed behavior on a second device?
+- How do systems roll back a bad shared update, and how do systems handle
+  conflicting corrections from different users?
+
+### 4. Platform as an open question
+
+- Which parts of the problem actually require a phone (ambient audio, calls,
+  notifications, wearables), which parts fit a laptop (typing, files, browser,
+  messaging, email), and which parts require both surfaces cooperating?
+- What do GitHub personal-agent projects assume about the host surface, and
+  what breaks when the host surface changes?
+
+## Research Steps
+
+1. **Scholar sweep, 2025–2026 only.** Complete the Google Scholar search the
+   owner named. Record paper, year, problem claim, method, evaluation data
+   (real sessions versus synthetic), and stated limits for each included paper.
+   Exclude pre-2025 work from recommendations; name any excluded influential
+   paper only as excluded, with the year shown.
+2. **GitHub sweep.** Find projects doing interesting work on proactive action,
+   standing permissions, ambient capture, and cross-user learning. For each
+   project record: host surface, action channels, permission model, evidence
+   of real use, license, and failure/limitation notes from issues or docs.
+   Repository popularity alone does not count as evidence a project works.
+3. **Cosmo/FM architecture read as research.** Extract the Cosmo problem
+   decomposition from `~/cosmo-dev` and `~/neural`. Separately record where
+   the FM reimplementation is partial, incorrectly designed, or mobile-bound,
+   using the owner caveat in this file rather than README claims as authority.
+4. **Comparative synthesis.** Compare papers, GitHub projects, and Cosmo/FM
+   on the three owner problems only: permissions, proactivity, learning
+   transfer. Mark every claim as owner requirement, inspected source evidence,
+   or unresolved gap.
+5. **Open-decision report.** End research with the decisions research could
+   not settle — platform, host surface, reuse versus greenfield, consent model
+   for a second user — stated as owner decisions with the evidence for each
+   option. Research output must not smuggle a decision in as a recommendation
+   the owner did not ask for.
+
+## Evidence So Far (preliminary, to be completed by the sweeps)
+
+- The `deep-research` workflow run for this topic completed with
+  "No source-backed claims were found" and produced no usable findings.
+- Direct inspection has covered: `ideation.md`; top-level structure and
+  README/PLAN documents in `~/cosmo-dev` and `~/neural`; and the primary
+  sources listed under Sources. The Google Scholar sweep and the GitHub sweep
+  named by the owner are not yet complete and must not be reported as done.
+- CaMeL (2025) reports a capability/information-flow layer around an LLM agent
+  solving 77% of AgentDojo tasks with provable security versus 84%
+  undefended — relevant evidence for Research Question 1, not a chosen design.
+- ProAgent (2025) studies proactive agents with on-demand sensory context —
+  relevant evidence for Research Question 2, not a chosen design.
+- ProAgentBench (2026) evaluates proactive assistance on real user sessions
+  and splits the task into timing prediction and assistance-content
+  generation — relevant evidence for Research Questions 2 and 3, not a chosen
+  benchmark commitment.
+- The OpenClaw GitHub repository is one candidate entry for the GitHub sweep.
+  No conclusion about OpenClaw quality, fit, or reuse has been drawn.
 
 ## Risks / Open Questions
 
-- Platform assumption: Android phone first, because FM already runs there. A desktop-first agent would invalidate the reuse decision.
-- Consent model for the second user in Phase 5 needs an explicit opt-in design before any bundle ships.
-- Google Scholar coverage and the aggregation mechanism remain open until Phase 0 closes both gaps. A 2024 proactive-agent paper surfaced during search and was excluded from recommendations because ideation.md restricts Scholar research to 2025–2026.
-- Clean-room boundary: `~/neural/README.md` notes recovered Cosmo artifacts under an interoperability rationale. Phase 0 must confirm no copied Cosmo code enters new phases.
+- Platform remains fully open: mobile, laptop/desktop, or both.
+- Consent and privacy terms for learning transfer to a second user remain open.
+- The shared-learning aggregation mechanism has no inspected primary source yet.
+- Google Scholar coverage for 2025–2026 remains incomplete until Research
+  Step 1 finishes.
+- Clean-room and licensing boundaries for any Cosmo-derived material require
+  research before any future build discussion.
 
-## Sources
+## Sources (inspected so far)
 
 - [CaMeL — Defeating Prompt Injections by Design (2025)](https://arxiv.org/abs/2503.18813)
 - [ProAgent — Harnessing On-Demand Sensory Contexts for Proactive LLM Agent Systems (2025)](https://arxiv.org/html/2512.06721v1)
