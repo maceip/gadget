@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { availabilityTimes, discoverRepos, parseGitLog, parseReflog, readGitRepo } from "../src/miner/parsers/git.js";
 import { EventStore } from "../src/miner/store.js";
-import { RepoGrepSearcher } from "../src/runtime/searchers.js";
+import { checkEventFreshness, RepoGrepSearcher } from "../src/runtime/searchers.js";
 import { tmp } from "./helpers.js";
 
 function initRepo(dir: string, commits: Array<{ msg: string; date: string; authorDate?: string }>) {
@@ -224,6 +224,25 @@ test("runtime repo grep still works when HEAD's reflog is larger than 1 MiB", as
   try {
     const hits = await new RepoGrepSearcher(store, repo).search("--tier-up-flag", Date.UTC(2026, 1, 1));
     assert.equal(hits.length, 1);
+  } finally {
+    store.close();
+  }
+});
+
+test("runtime freshness is UNKNOWN, not CURRENT, before the repo's oldest HEAD reflog entry", () => {
+  const repo = join(tmp(), "fresh");
+  mkdirSync(repo);
+  at(repo, "2026-01-01T00:00:00Z", "init", "-q");
+  writeFileSync(join(repo, "build.ts"), "export const flags = ['--tier-up-flag'];\n");
+  at(repo, "2026-01-01T00:00:00Z", "add", ".");
+  at(repo, "2026-01-01T00:00:00Z", "-c", "user.email=o@example.com", "-c", "user.name=O", "commit", "-q", "-m", "init");
+  const store = new EventStore(join(tmp(), "s.db"));
+  try {
+    const ev = { eventId: "e", source: "git" as const, timestampMs: 1, contentText: "use --tier-up-flag", sourceUri: "x", metadataJson: "{}" };
+    assert.equal(checkEventFreshness(ev, [], store, Date.UTC(2025, 11, 1), repo).freshness, "UNKNOWN");
+    const later = checkEventFreshness(ev, [], store, Date.UTC(2026, 1, 1), repo);
+    assert.equal(later.freshness, "CURRENT");
+    assert.match(later.freshnessCheck, /1 hits$/);
   } finally {
     store.close();
   }

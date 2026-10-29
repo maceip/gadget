@@ -179,22 +179,21 @@ export function askedQuestion(text: string): string | null {
   const sentences: string[] = [];
   let inFence = false;
   for (const raw of text.split("\n")) {
-    const line = raw.trim();
-    // A fence can sit inside a block quote ("> ```").
-    const unquoted = line.replace(/^(?:>\s*)+/, "");
-    if (unquoted.startsWith("```") || unquoted.startsWith("~~~")) {
+    // List and quote markers ("- ", "1. ", "> ") are not part of the sentence, and a
+    // fence can sit inside either ("> ```", "- ```").
+    const text = raw.trim().replace(/^(?:(?:[-*+]|\d+[.)])\s+|>\s*)+/, "");
+    if (text.startsWith("```") || text.startsWith("~~~")) {
       inFence = !inFence;
       continue;
     }
-    if (inFence || !line) continue;
-    // List and quote markers ("- ", "1. ", "> ") are not part of the sentence.
-    const text = line.replace(/^(?:(?:[-*+]|\d+[.)])\s+|>\s*)+/, "");
+    if (inFence || !text) continue;
     sentences.push(...text.split(/(?<=[.!?][*_"'`)\]]*)\s+/).filter(Boolean));
   }
   const found = sentences.filter((s, i) => {
     const core = s.replace(OPENER, "");
     if (REQUEST.test(core)) return false;
-    return QUESTION_END.test(s) || ((i === 0 || i === sentences.length - 1) && QUESTION_START.test(core));
+    // A URL can end in a bare "?" (".../search?"); it is not a question.
+    return QUESTION_END.test(s.replace(/\b[a-z][a-z0-9+.-]*:\/\/\S+/gi, "").trim()) || ((i === 0 || i === sentences.length - 1) && QUESTION_START.test(core));
   });
   return found.length > 0 ? found.join(" ").slice(0, 500) : null;
 }

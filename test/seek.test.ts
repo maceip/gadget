@@ -156,3 +156,10 @@ test("ASK_AGENT: a fence inside a block quote is code too", () => {
   assert.equal(isQuestion("> ```\n> why?\n> ```\ncan you fix this?"), false);
   assert.equal(askedQuestion("> ```\n> x = a ? b : c\n> ```\n> why does this fail?"), "why does this fail?");
 });
+
+test("ASK_AGENT: a fence under a list item is code; a URL ending in ? is not a question", () => {
+  assert.equal(isQuestion("- ```\n  why?\n  ```\ncan you fix this?"), false);
+  assert.equal(askedQuestion("- ```\n  x\n  ```\nwhy does the build fail?"), "why does the build fail?");
+  assert.equal(isQuestion("GET https://example.test/search?\nplease rerun it"), false);
+  assert.equal(askedQuestion("is https://example.test/search? the right endpoint?"), "is https://example.test/search? the right endpoint?");
+});

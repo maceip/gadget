@@ -59,11 +59,14 @@ export function checkEventFreshness(
   if (flagMatch && workspacePath && existsSync(workspacePath)) {
     const flag = flagMatch[0]!;
     const commit = commitBefore(workspacePath, asOfMs);
-    if (commit) {
-      const hits = gitGrepCount(workspacePath, commit, flag);
-      const checkDesc = `git grep -- ${flag} ${commit.slice(0, 7)}: ${hits} hits`;
-      return { freshness: "CURRENT", freshnessCheck: checkDesc };
+    if (!commit) {
+      // No HEAD reflog entry before asOfMs: the checkout at that moment is unknown, so
+      // nothing was checked and the hit cannot be called CURRENT.
+      return { freshness: "UNKNOWN", freshnessCheck: `no HEAD reflog entry before asOfMs=${asOfMs}: repo state unknown` };
     }
+    const hits = gitGrepCount(workspacePath, commit, flag);
+    const checkDesc = `git grep -- ${flag} ${commit.slice(0, 7)}: ${hits} hits`;
+    return { freshness: "CURRENT", freshnessCheck: checkDesc };
   }
 
   return {
