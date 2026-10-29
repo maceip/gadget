@@ -1,11 +1,18 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { listAudioDevices, parseAvFoundationDeviceList } from "../src/media/audio_recorder.js";
 import { hasConcealedPasteboardType, readSafeClipboard } from "../src/media/clipboard.js";
 import { readFocusedTextSafe, watchKeysBurst } from "../src/media/keyboard.js";
+import {
+  checkSensoryPermissions,
+  ensureSensoryBinary,
+  SENSORY_APP_NAME,
+  SENSORY_BUNDLE_ID,
+} from "../src/media/native_helper.js";
 import { ocrImage, renderTextImage } from "../src/media/screen.js";
 import { findWhisperModel, transcribeAudio } from "../src/media/stt.js";
 import { listVoices, synthesizeSpeech } from "../src/media/tts.js";
@@ -187,6 +194,36 @@ test("AmbientCatalogDaemon & sensory parsers: screen, audio, keyboard, and learn
   const dir = mkdtempSync(join(tmpdir(), "gadget-daemon-test-"));
   try {
     if (process.platform === "darwin") {
+      const binPath = ensureSensoryBinary();
+      assert.ok(existsSync(binPath));
+      assert.ok(binPath.includes(`${SENSORY_APP_NAME}.app/Contents/MacOS/GadgetSensoryCapture`));
+
+      const perms = checkSensoryPermissions();
+      assert.equal(perms.appName, SENSORY_APP_NAME);
+      assert.equal(perms.bundleId, SENSORY_BUNDLE_ID);
+      assert.equal(perms.kernelNetworkAndExecSandboxed, true);
+      assert.equal(perms.readOnlyContained, true);
+
+      // Verify Mach-O symbol table has zero mutation, input-synthesis, or network symbols
+      const symbols = execFileSync("/usr/bin/nm", ["-u", binPath], { encoding: "utf8" });
+      for (const forbidden of [
+        "_AXUIElementPerformAction",
+        "_AXUIElementSetAttributeValue",
+        "_AXUIElementPostKeyboardEvent",
+        "_CGEventPost",
+        "_CGEventPostToPid",
+        "_CGEventCreateKeyboardEvent",
+        "_CGEventCreateMouseEvent",
+        "_NSURLSession",
+        "_connect",
+      ]) {
+        assert.equal(
+          symbols.includes(forbidden),
+          false,
+          `Contained sensory binary must not import ${forbidden}`,
+        );
+      }
+
       const focus = readFocusedTextSafe();
       assert.equal(typeof focus.trusted, "boolean");
       assert.equal(typeof focus.skippedSecure, "boolean");

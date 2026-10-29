@@ -12,6 +12,7 @@ import { dirname, join } from "node:path";
 import { listAudioDevices, recordAudioClip } from "../media/audio_recorder.js";
 import { captureClipboardOnce } from "../media/clipboard.js";
 import { captureFocusedTextOnce, watchKeysBurst } from "../media/keyboard.js";
+import { checkSensoryPermissions } from "../media/native_helper.js";
 import { captureScreenAndOcr } from "../media/screen.js";
 import { transcribeAudio } from "../media/stt.js";
 import { listVoices, speakAloud, synthesizeSpeech } from "../media/tts.js";
@@ -234,6 +235,13 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
 
+  if (cmd === "permissions") {
+    const prompt = args.includes("--prompt");
+    const perms = checkSensoryPermissions({ prompt });
+    console.log(JSON.stringify(perms, null, 2));
+    return 0;
+  }
+
   if (cmd === "daemon") {
     const intervalMs = Number(flag(args, "--interval-ms") ?? "5000");
     const enableAudio = args.includes("--audio");
@@ -296,6 +304,7 @@ async function main(argv: string[]): Promise<number> {
       }
     }
     const labelsMap = loadLatestLabelsMap(cfg.reportsDir);
+    const sensoryPermissions = process.platform === "darwin" ? checkSensoryPermissions() : null;
     console.log(
       JSON.stringify(
         {
@@ -303,6 +312,7 @@ async function main(argv: string[]): Promise<number> {
           totalEvents,
           bySource,
           labeledEpisodesCount: labelsMap.size,
+          sensoryPermissions,
           daemon: daemonStatus,
           recentEvents: recent,
         },
@@ -335,7 +345,7 @@ async function main(argv: string[]): Promise<number> {
   }
 
   console.error(
-    "usage: npm run mine -- ingest | report [--seed N] [--out DIR] | probe | replay | mcp | web [--port N] | daemon [--once] [--audio] | status | search <query> | tts | stt | record-audio | capture-screen | capture-clipboard | capture-keys",
+    "usage: npm run mine -- ingest | report [--seed N] [--out DIR] | probe | replay | mcp | web [--port N] | daemon [--once] [--audio] | status | permissions [--prompt] | search <query> | tts | stt | record-audio | capture-screen | capture-clipboard | capture-keys",
   );
   return 2;
 }

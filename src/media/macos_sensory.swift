@@ -1,8 +1,29 @@
 import AppKit
 import ApplicationServices
 import CoreGraphics
+import Darwin
 import Foundation
 import Vision
+
+@_silgen_name("sandbox_init")
+private func c_sandbox_init(
+  _ profile: UnsafePointer<CChar>,
+  _ flags: UInt64,
+  _ errorbuf: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+) -> Int32
+
+private func enterReadOnlyContainSandbox() -> Bool {
+  // Kernel-level Seatbelt containment: deny all IPv4/IPv6 network traffic (outbound and inbound)
+  // and deny all subprocess execution, while allowing local Mach/IPC needed by Apple Vision.framework.
+  let profile = "(version 1)(allow default)(deny network-inbound)(deny network-outbound (remote ip))(deny process-exec*)"
+  var errBuf: UnsafeMutablePointer<CChar>? = nil
+  let rc = profile.withCString { ptr in
+    c_sandbox_init(ptr, 0, &errBuf)
+  }
+  return rc == 0
+}
+
+let isKernelSandboxed = enterReadOnlyContainSandbox()
 
 let concealedTypeNames: Set<String> = [
   "org.nspasteboard.ConcealedType",
@@ -52,6 +73,48 @@ struct KeyWatchOutput: Codable {
   let text: String
   let frontmostApp: String?
   let windowTitle: String?
+}
+
+struct PermissionsOutput: Codable {
+  let appName: String
+  let bundleId: String
+  let executablePath: String
+  let kernelNetworkAndExecSandboxed: Bool
+  let accessibilityTrusted: Bool
+  let inputMonitoringAccess: Bool
+  let screenCaptureAccess: Bool
+  let readOnlyContained: Bool
+}
+
+func handlePermissions(prompt: Bool) {
+  let axTrusted: Bool
+  if prompt {
+    let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+    axTrusted = AXIsProcessTrustedWithOptions(opts)
+  } else {
+    axTrusted = AXIsProcessTrusted()
+  }
+  let listenAccess = prompt ? CGRequestListenEventAccess() : CGPreflightListenEventAccess()
+  let screenAccess = prompt ? CGRequestScreenCaptureAccess() : CGPreflightScreenCaptureAccess()
+  let bundle = Bundle.main
+  let appName = (bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String)
+    ?? (bundle.object(forInfoDictionaryKey: "CFBundleName") as? String)
+    ?? "Gadget Read-Only Sensory Capture"
+  let bundleId = bundle.bundleIdentifier ?? "local.gadget.sensory-capture"
+  let execPath = bundle.executablePath ?? CommandLine.arguments[0]
+
+  printJson(
+    PermissionsOutput(
+      appName: appName,
+      bundleId: bundleId,
+      executablePath: execPath,
+      kernelNetworkAndExecSandboxed: isKernelSandboxed,
+      accessibilityTrusted: axTrusted,
+      inputMonitoringAccess: listenAccess,
+      screenCaptureAccess: screenAccess,
+      readOnlyContained: true
+    )
+  )
 }
 
 func inspectFocusedElement() -> (trusted: Bool, isSecure: Bool, role: String?, value: String?) {
@@ -359,11 +422,14 @@ func handleRenderTextImage(outPath: String, text: String) {
 
 let args = CommandLine.arguments
 guard args.count >= 2 else {
-  fputs("Usage: gadget-sensory <clipboard|window-info|focused-text|watch-keys [sec]|ocr <imgPath>|render-text-image <outPath> <text>>\n", stderr)
+  fputs("Usage: GadgetSensoryCapture <permissions [--prompt]|clipboard|window-info|focused-text|watch-keys [sec]|ocr <imgPath>|render-text-image <outPath> <text>>\n", stderr)
   exit(1)
 }
 
 switch args[1] {
+case "permissions":
+  let prompt = args.contains("--prompt")
+  handlePermissions(prompt: prompt)
 case "clipboard":
   handleClipboard()
 case "window-info":
