@@ -1,4 +1,5 @@
 import { mkdtempSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,4 +34,21 @@ export function stored(e: EpisodicEvent): StoredEvent {
     metadataJson: e.metadataJson,
     seeks: classifyEventAll(e),
   };
+}
+
+// Playwright is not a dependency. Browser tests use it when the machine has it
+// (`import`, or `require` resolution, which also honors NODE_PATH) and skip otherwise.
+export async function loadPlaywright(): Promise<any | null> {
+  const fromModule = (m: any) => (m?.chromium ? m : m?.default?.chromium ? m.default : null);
+  try {
+    const m = fromModule(await import("playwright" as string));
+    if (m) return m;
+  } catch {
+    // not importable from here
+  }
+  try {
+    return fromModule(createRequire(import.meta.url)("playwright"));
+  } catch {
+    return null;
+  }
 }

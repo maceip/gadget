@@ -62,6 +62,8 @@ Opens the Phase 0 Episode Tagging Workbench at `http://127.0.0.1:4321`. It loads
 
  The workbench server on `127.0.0.1:4321` also receives live browser visits, search queries, and Chrome History API sync from the unpacked Chrome extension in `extensions/chrome-shadow-bridge` (`chrome://extensions` -> Load unpacked -> select `extensions/chrome-shadow-bridge`), writing them to `~/.gadget/capture/chrome.jsonl` (mode `600`).
 
+Only the workbench's own page (opened at `http://127.0.0.1:4321` or `http://localhost:4321`), the capture extension, and local programs such as `curl` are served. Requests from any other web page, and requests for another host name pointed at this address, get `403`: no other site can read your episodes or write labels or capture events.
+
 ## Try it on fake data first
 
 ```bash
