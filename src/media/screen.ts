@@ -22,6 +22,22 @@ export interface CaptureScreenOptions {
   binDir?: string;
 }
 
+export function areScreensNearIdentical(prevText: string | undefined, nextText: string): boolean {
+  if (!prevText) return false;
+  const a = prevText.trim();
+  const b = nextText.trim();
+  if (a === b) return true;
+  const tokA = new Set((a.toLowerCase().match(/[a-z][a-z0-9_-]{2,}/g) ?? []));
+  const tokB = new Set((b.toLowerCase().match(/[a-z][a-z0-9_-]{2,}/g) ?? []));
+  if (tokA.size < 10 || tokB.size < 10) return false;
+  let inter = 0;
+  for (const t of tokA) {
+    if (tokB.has(t)) inter++;
+  }
+  const union = tokA.size + tokB.size - inter;
+  return union > 0 && inter / union >= 0.92;
+}
+
 export function ocrImage(imagePath: string, binDir?: string): ScreenOcrResult {
   if (!existsSync(imagePath)) {
     throw new Error(`Image file not found: ${imagePath}`);
@@ -73,7 +89,7 @@ export function captureScreenAndOcr(options: CaptureScreenOptions = {}): ScreenO
   try {
     const ocr = ocrImage(imgPath, options.binDir);
     const trimmed = ocr.text.trim();
-    if (options.captureJsonlPath && trimmed.length > 0 && trimmed !== options.lastText) {
+    if (options.captureJsonlPath && trimmed.length > 0 && !areScreensNearIdentical(options.lastText, trimmed)) {
       mkdirSync(dirname(options.captureJsonlPath), { recursive: true, mode: 0o700 });
       const record = {
         ts: Date.now(),

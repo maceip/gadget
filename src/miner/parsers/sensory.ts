@@ -1,7 +1,7 @@
+import { areScreensNearIdentical } from "../../media/screen.js";
+import { isWhisperNonSpeech } from "../../media/stt.js";
 import { makeEvent } from "../event.js";
 import { bump, emptyCounts, type EpisodicEvent, type ParseResult } from "../types.js";
-
-const WHISPER_SILENCE = /^(\[(blank_audio|silence|music|noise|inaudible)\]|\((silence|blank|music|noise)\)|\s)+$/i;
 
 export function parseScreenCapture(raw: string, sourceFile: string): ParseResult {
   const counts = emptyCounts();
@@ -33,7 +33,7 @@ export function parseScreenCapture(raw: string, sourceFile: string): ParseResult
       return;
     }
 
-    if (text === prevText) {
+    if (areScreensNearIdentical(prevText, text)) {
       bump(counts.skipped, "unchanged_screen");
       return;
     }
@@ -90,7 +90,7 @@ export function parseAudioCapture(raw: string, sourceFile: string): ParseResult 
     }
 
     const text = typeof rec.transcript === "string" ? rec.transcript.trim() : typeof rec.text === "string" ? rec.text.trim() : "";
-    if (!text || WHISPER_SILENCE.test(text)) {
+    if (isWhisperNonSpeech(text)) {
       bump(counts.skipped, "silence_or_empty");
       return;
     }

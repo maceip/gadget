@@ -21,6 +21,14 @@ export interface TranscribeResult {
   processingMs: number;
 }
 
+const WHISPER_NON_SPEECH = /^(?:\[[^\]]*\]|\([^)]*\)|\s|[.,!?;:-])+$/i;
+
+export function isWhisperNonSpeech(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return true;
+  return WHISPER_NON_SPEECH.test(trimmed);
+}
+
 export function findWhisperModel(customPath?: string): string {
   const home = homedir();
   const candidates = [
@@ -94,7 +102,7 @@ export function transcribeAudio(options: TranscribeOptions): TranscribeResult {
       .replace(/\s+/g, " ")
       .trim();
 
-    if (options.captureJsonlPath && transcript.length > 0) {
+    if (options.captureJsonlPath && !isWhisperNonSpeech(transcript)) {
       mkdirSync(dirname(options.captureJsonlPath), { recursive: true, mode: 0o700 });
       const record = {
         ts: Date.now(),

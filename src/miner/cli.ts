@@ -243,10 +243,10 @@ async function main(argv: string[]): Promise<number> {
   }
 
   if (cmd === "daemon") {
-    const intervalMs = Number(flag(args, "--interval-ms") ?? "5000");
+    const intervalMs = Number(flag(args, "--interval-ms") ?? "1500");
     const enableAudio = args.includes("--audio");
     const audioClipSec = Number(flag(args, "--audio-sec") ?? "3");
-    const keyWatchSec = Number(flag(args, "--key-sec") ?? "1.5");
+    const keyWatchSec = Number(flag(args, "--key-sec") ?? "2.0");
     const once = args.includes("--once");
     const daemon = new AmbientCatalogDaemon(cfg, {
       intervalMs,

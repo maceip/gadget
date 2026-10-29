@@ -13,8 +13,8 @@ import {
   SENSORY_APP_NAME,
   SENSORY_BUNDLE_ID,
 } from "../src/media/native_helper.js";
-import { ocrImage, renderTextImage } from "../src/media/screen.js";
-import { findWhisperModel, transcribeAudio } from "../src/media/stt.js";
+import { areScreensNearIdentical, ocrImage, renderTextImage } from "../src/media/screen.js";
+import { findWhisperModel, isWhisperNonSpeech, transcribeAudio } from "../src/media/stt.js";
 import { listVoices, synthesizeSpeech } from "../src/media/tts.js";
 import { defaultConfig } from "../src/miner/config.js";
 import { buildEpisodes } from "../src/miner/episodes.js";
@@ -231,6 +231,15 @@ test("AmbientCatalogDaemon & sensory parsers: screen, audio, keyboard, and learn
       assert.equal(typeof keys.listenAccess, "boolean");
     }
 
+    assert.equal(isWhisperNonSpeech("[BLANK_AUDIO]"), true);
+    assert.equal(isWhisperNonSpeech("(gentle music)"), true);
+    assert.equal(isWhisperNonSpeech("(snoring)"), true);
+    assert.equal(isWhisperNonSpeech("check the dynamic workflow runtime"), false);
+
+    const baseScreen = "Antigravity File Edit View Window building Smart GitHub Crawling Service Conversation History Automations Customizations Projects Haymens swizzle";
+    assert.equal(areScreensNearIdentical(baseScreen + " 08:48", baseScreen + " 08:49"), true);
+    assert.equal(areScreensNearIdentical(baseScreen, "Ghostty terminal model.tools DNS cache issue"), false);
+
     const screenRaw = [
       JSON.stringify({ ts: 1000, frontmostApp: "Cursor", windowTitle: "store.ts", text: "Error: SQLITE_BUSY", lineCount: 1 }),
       JSON.stringify({ ts: 2000, frontmostApp: "Cursor", windowTitle: "store.ts", text: "Error: SQLITE_BUSY", lineCount: 1 }),
@@ -241,11 +250,13 @@ test("AmbientCatalogDaemon & sensory parsers: screen, audio, keyboard, and learn
 
     const audioRaw = [
       JSON.stringify({ ts: 1500, transcript: "[BLANK_AUDIO]" }),
+      JSON.stringify({ ts: 1800, transcript: "(gentle music)" }),
+      JSON.stringify({ ts: 2100, transcript: "(snoring)" }),
       JSON.stringify({ ts: 2500, transcript: "check the dynamic workflow runtime harness in ZCode" }),
     ].join("\n");
     const aParsed = parseAudioCapture(audioRaw, "/tmp/audio.jsonl");
     assert.equal(aParsed.counts.parsed, 1);
-    assert.equal(aParsed.counts.skipped.silence_or_empty, 1);
+    assert.equal(aParsed.counts.skipped.silence_or_empty, 3);
 
     const kbRaw = [
       JSON.stringify({ ts: 3000, skippedSecure: true, text: "hunter2" }),

@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { appendFileSync, chmodSync, existsSync, mkdirSync, statSync } from "node:fs";
-import { homedir } from "node:os";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, rmSync, statSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { findExecutable } from "./native_helper.js";
 import { transcribeAudio } from "./stt.js";
@@ -19,6 +19,7 @@ export interface AvDeviceList {
 export interface RecordAudioOptions {
   durationSec: number;
   outputPath?: string;
+  keepAudio?: boolean;
   audioDeviceIndex?: number;
   transcribe?: boolean;
   modelPath?: string;
@@ -76,9 +77,13 @@ export function recordAudioClip(options: RecordAudioOptions): RecordAudioResult 
   }
   const ffmpeg = findExecutable("ffmpeg", ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/usr/bin/ffmpeg"]);
   const audioIdx = options.audioDeviceIndex ?? 0;
+  const keep = Boolean(options.keepAudio || options.outputPath || !options.transcribe);
   const outPath =
     options.outputPath ??
-    join(homedir(), ".gadget", "capture", "audio", `clip-${Date.now()}.wav`);
+    join(
+      keep ? join(homedir(), ".gadget", "capture", "audio") : tmpdir(),
+      `clip-${process.pid}-${Date.now()}.wav`,
+    );
 
   mkdirSync(dirname(outPath), { recursive: true, mode: 0o700 });
 
@@ -114,39 +119,45 @@ export function recordAudioClip(options: RecordAudioOptions): RecordAudioResult 
   const wav = parseWavHeader(outPath);
 
   let transcript: string | undefined;
-  if (options.transcribe) {
-    const sttRes = transcribeAudio({
-      audioPath: outPath,
-      modelPath: options.modelPath,
-      captureJsonlPath: options.captureJsonlPath,
-      workspacePath: options.workspacePath,
-    });
-    transcript = sttRes.transcript;
-  } else if (options.captureJsonlPath) {
-    mkdirSync(dirname(options.captureJsonlPath), { recursive: true, mode: 0o700 });
-    const record = {
-      ts: Date.now(),
-      kind: "audio_clip",
-      audioPath: outPath,
+  try {
+    if (options.transcribe) {
+      const sttRes = transcribeAudio({
+        audioPath: outPath,
+        modelPath: options.modelPath,
+        captureJsonlPath: options.captureJsonlPath,
+        workspacePath: options.workspacePath,
+      });
+      transcript = sttRes.transcript;
+    } else if (options.captureJsonlPath) {
+      mkdirSync(dirname(options.captureJsonlPath), { recursive: true, mode: 0o700 });
+      const record = {
+        ts: Date.now(),
+        kind: "audio_clip",
+        audioPath: outPath,
+        durationSec: wav.durationSec,
+        sampleRate: wav.sampleRate,
+        audioDeviceIndex: audioIdx,
+        cwd: options.workspacePath ?? process.cwd(),
+      };
+      appendFileSync(options.captureJsonlPath, `${JSON.stringify(record)}\n`, { mode: 0o600 });
+      try {
+        chmodSync(options.captureJsonlPath, 0o600);
+      } catch {
+        // ignore
+      }
+    }
+
+    return {
+      outputPath: outPath,
+      bytes: st.size,
       durationSec: wav.durationSec,
       sampleRate: wav.sampleRate,
       audioDeviceIndex: audioIdx,
-      cwd: options.workspacePath ?? process.cwd(),
+      ...(transcript !== undefined ? { transcript } : {}),
     };
-    appendFileSync(options.captureJsonlPath, `${JSON.stringify(record)}\n`, { mode: 0o600 });
-    try {
-      chmodSync(options.captureJsonlPath, 0o600);
-    } catch {
-      // ignore
+  } finally {
+    if (!keep) {
+      rmSync(outPath, { force: true });
     }
   }
-
-  return {
-    outputPath: outPath,
-    bytes: st.size,
-    durationSec: wav.durationSec,
-    sampleRate: wav.sampleRate,
-    audioDeviceIndex: audioIdx,
-    ...(transcript !== undefined ? { transcript } : {}),
-  };
 }

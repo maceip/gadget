@@ -4,6 +4,7 @@ import { recordAudioClip } from "../media/audio_recorder.js";
 import { captureClipboardOnce } from "../media/clipboard.js";
 import { captureFocusedTextOnce, watchKeysBurst } from "../media/keyboard.js";
 import { captureScreenAndOcr } from "../media/screen.js";
+import { keyTokens } from "../miner/ceiling.js";
 import type { MinerConfig } from "../miner/config.js";
 import { buildEpisodes } from "../miner/episodes.js";
 import { parseChromeCapture } from "../miner/parsers/chrome.js";
@@ -11,8 +12,8 @@ import { parseClipboardCapture } from "../miner/parsers/clipboard.js";
 import { parseAudioCapture, parseKeyboardCapture, parseScreenCapture } from "../miner/parsers/sensory.js";
 import { parseZshHook } from "../miner/parsers/zsh_hook.js";
 import { withSeeks } from "../miner/seek.js";
-import { EventStore } from "../miner/store.js";
-import type { EpisodicEvent } from "../miner/types.js";
+import { EventStore, type StoredEvent } from "../miner/store.js";
+import type { EpisodicEvent, Seek, SeekingEpisode } from "../miner/types.js";
 import { readLabelsCsv } from "../web/server.js";
 import { CalibratedAnticipator, type EpisodeLabel } from "./anticipator.js";
 import { FtsEventsSearcher } from "./searchers.js";
@@ -54,6 +55,9 @@ export class AmbientCatalogDaemon {
   private lastClipboardChangeCount: number | undefined;
   private lastFocusedText: string | undefined;
   private lastScreenText: string | undefined;
+  private readonly parsedLineCounts = new Map<string, number>();
+  private cachedEpisodes: SeekingEpisode[] | null = null;
+  private lastEpisodesBuiltAtMs = 0;
   private ticks = 0;
   private insertedEventsTotal = 0;
   private readonly startedAt = new Date().toISOString();
@@ -62,6 +66,21 @@ export class AmbientCatalogDaemon {
     private readonly cfg: MinerConfig,
     private readonly opts: DaemonOptions = {},
   ) {}
+
+  private readIncrementalTail(filePath: string, keepOverlapLines = 0): string | null {
+    if (!existsSync(filePath)) return null;
+    const raw = readFileSync(filePath, "utf8");
+    const lines = raw.split("\n");
+    const nonTrailingCount = lines.at(-1) === "" ? lines.length - 1 : lines.length;
+    const prevCount = this.parsedLineCounts.get(filePath) ?? 0;
+    if (prevCount > 0 && nonTrailingCount <= prevCount) {
+      return null;
+    }
+    const startIdx = Math.max(0, prevCount - keepOverlapLines);
+    this.parsedLineCounts.set(filePath, nonTrailingCount);
+    if (startIdx === 0) return raw;
+    return "\n".repeat(startIdx) + lines.slice(startIdx).join("\n");
+  }
 
   runTick(): DaemonStatus {
     this.ticks++;
@@ -165,23 +184,29 @@ export class AmbientCatalogDaemon {
     let countsBySource: Record<string, number> = {};
     try {
       const batch: EpisodicEvent[] = [];
-      if (existsSync(this.cfg.zshHook)) {
-        batch.push(...parseZshHook(readFileSync(this.cfg.zshHook, "utf8"), this.cfg.zshHook).events);
+      const zshRaw = this.readIncrementalTail(this.cfg.zshHook, 0);
+      if (zshRaw !== null) {
+        batch.push(...parseZshHook(zshRaw, this.cfg.zshHook).events);
       }
-      if (existsSync(chromePath)) {
-        batch.push(...parseChromeCapture(readFileSync(chromePath, "utf8"), chromePath).events);
+      const chromeRaw = this.readIncrementalTail(chromePath, 0);
+      if (chromeRaw !== null) {
+        batch.push(...parseChromeCapture(chromeRaw, chromePath).events);
       }
-      if (existsSync(clipboardPath)) {
-        batch.push(...parseClipboardCapture(readFileSync(clipboardPath, "utf8"), clipboardPath).events);
+      const clipRaw = this.readIncrementalTail(clipboardPath, 0);
+      if (clipRaw !== null) {
+        batch.push(...parseClipboardCapture(clipRaw, clipboardPath).events);
       }
-      if (existsSync(screenPath)) {
-        batch.push(...parseScreenCapture(readFileSync(screenPath, "utf8"), screenPath).events);
+      const screenRaw = this.readIncrementalTail(screenPath, 1);
+      if (screenRaw !== null) {
+        batch.push(...parseScreenCapture(screenRaw, screenPath).events);
       }
-      if (existsSync(keyboardPath)) {
-        batch.push(...parseKeyboardCapture(readFileSync(keyboardPath, "utf8"), keyboardPath).events);
+      const kbRaw = this.readIncrementalTail(keyboardPath, 1);
+      if (kbRaw !== null) {
+        batch.push(...parseKeyboardCapture(kbRaw, keyboardPath).events);
       }
-      if (existsSync(audioPath)) {
-        batch.push(...parseAudioCapture(readFileSync(audioPath, "utf8"), audioPath).events);
+      const audioRaw = this.readIncrementalTail(audioPath, 0);
+      if (audioRaw !== null) {
+        batch.push(...parseAudioCapture(audioRaw, audioPath).events);
       }
 
       if (batch.length > 0) {
@@ -224,29 +249,85 @@ export class AmbientCatalogDaemon {
     if (!existsSync(this.cfg.dbPath)) return 0;
     const store = new EventStore(this.cfg.dbPath, { readOnly: true });
     try {
-      const events = store.allEventsSorted();
-      if (events.length === 0) return 0;
-      const episodes = buildEpisodes(events, this.cfg);
+      const nowMs = Date.now();
+      if (this.cachedEpisodes === null || nowMs - this.lastEpisodesBuiltAtMs > 5 * 60 * 1000) {
+        const recentNonGitEvents = store.db
+          .prepare(
+            `SELECT event_id, source, timestamp_ms, workspace_path, content_text, source_uri, metadata_json, seeks_json
+               FROM events
+              WHERE source != 'git' AND source != 'screen'
+              ORDER BY timestamp_ms DESC
+              LIMIT 12000`,
+          )
+          .all() as Array<{
+          event_id: string;
+          source: EpisodicEvent["source"];
+          timestamp_ms: number;
+          workspace_path: string | null;
+          content_text: string;
+          source_uri: string;
+          metadata_json: string;
+          seeks_json: string;
+        }>;
+        const sortedSub: StoredEvent[] = recentNonGitEvents
+          .reverse()
+          .map((r) => ({
+            eventId: r.event_id,
+            source: r.source,
+            timestampMs: Number(r.timestamp_ms),
+            workspacePath: r.workspace_path ?? null,
+            contentText: r.content_text,
+            sourceUri: r.source_uri,
+            metadataJson: r.metadata_json,
+            seeks: JSON.parse(r.seeks_json) as Seek[],
+          }));
+        this.cachedEpisodes = buildEpisodes(sortedSub, this.cfg);
+        this.lastEpisodesBuiltAtMs = nowMs;
+      }
+
+      const recentRows = store.db
+        .prepare(
+          `SELECT event_id FROM (
+             SELECT event_id, timestamp_ms FROM events
+              WHERE source NOT IN ('screen', 'audio')
+              ORDER BY timestamp_ms DESC LIMIT 6
+           )
+           UNION ALL
+           SELECT event_id FROM (
+             SELECT event_id, timestamp_ms FROM events
+              WHERE source IN ('screen', 'audio')
+              ORDER BY timestamp_ms DESC LIMIT 4
+           )`,
+        )
+        .all() as Array<{ event_id: string }>;
+      const recentIds = [...new Set(recentRows.map((r) => r.event_id))];
+      if (recentIds.length === 0) return 0;
+
       const episodeLabels = loadLatestLabelsMap(this.cfg.reportsDir);
       const anticipator = new CalibratedAnticipator(store, {
-        priorEpisodes: episodes,
+        priorEpisodes: this.cachedEpisodes,
         episodeLabels,
       });
-      const recentIds = events.slice(-8).map((e) => e.eventId);
-      const nowMs = Date.now();
       const ctx = {
         endMs: nowMs,
         eventIds: recentIds,
         workspacePath,
       };
       const proposals = anticipator.propose(ctx);
-      if (proposals.length === 0) return 0;
+      const sensoryQueries = this.extractLiveSensoryQueries(store, nowMs);
+      const queryList = [...new Set([...proposals.map((p) => p.query), ...sensoryQueries])].slice(0, 8);
+      if (queryList.length === 0) return 0;
 
       const searcher = new FtsEventsSearcher(store, workspacePath);
       const surfacer = new VerifiedSurfacer(store);
       const allHits = [];
-      for (const p of proposals) {
-        allHits.push(...(await searcher.search(p.query, nowMs)));
+      for (const q of queryList) {
+        const hits = await searcher.search(q, nowMs);
+        for (const h of hits) {
+          if (!h.sourceUri.includes("/capture/screen.jsonl:")) {
+            allHits.push(h);
+          }
+        }
       }
       const decision = surfacer.decide(ctx, allHits);
       if (decision.action !== "SURFACE") return 0;
@@ -260,6 +341,41 @@ export class AmbientCatalogDaemon {
     } finally {
       store.close();
     }
+  }
+
+  private extractLiveSensoryQueries(store: EventStore, nowMs: number): string[] {
+    const cutoffMs = nowMs - 2 * 60 * 1000;
+    const rows = store.db
+      .prepare(
+        `SELECT source, content_text, metadata_json
+           FROM events
+          WHERE timestamp_ms >= ?
+            AND timestamp_ms <= ?
+            AND source IN ('keyboard', 'audio', 'clipboard', 'screen')
+          ORDER BY timestamp_ms DESC
+          LIMIT 6`,
+      )
+      .all(cutoffMs, nowMs) as Array<{ source: string; content_text: string; metadata_json: string }>;
+
+    const queries: string[] = [];
+    for (const r of rows) {
+      if (r.source === "keyboard" || r.source === "audio" || r.source === "clipboard") {
+        const toks = keyTokens(r.content_text, "ASK_AGENT").filter((t) => t.length >= 4);
+        if (toks.length >= 2) queries.push(toks.slice(0, 2).join(" "));
+        if (toks[0]) queries.push(toks[0]);
+      } else if (r.source === "screen") {
+        try {
+          const meta = JSON.parse(r.metadata_json) as { windowTitle?: string };
+          if (meta.windowTitle) {
+            const titleToks = keyTokens(meta.windowTitle, "ASK_AGENT").filter((t) => t.length >= 4);
+            if (titleToks.length >= 2) queries.push(titleToks.slice(0, 2).join(" "));
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+    return queries;
   }
 }
 
