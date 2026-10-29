@@ -207,3 +207,16 @@ test("ASK_AGENT: inline code, mismatched fences, and request clauses after conte
   assert.equal(askedQuestion("what would you recommend for the tier-up flag?"), "what would you recommend for the tier-up flag?");
   assert.equal(askedQuestion("where is the flag set, please?"), "where is the flag set, please?");
 });
+
+test("ASK_AGENT: indented code blocks are code; a scolding sentence does not discard the turn's real question", () => {
+  assert.equal(isQuestion("Output:\n\n    why?\n    still code?\n\nCan you fix this?"), false);
+  assert.equal(askedQuestion("Output:\n\n    x = 1\n\nwhy is x one?"), "why is x one?");
+  // Indented lines that continue a paragraph are not a code block.
+  assert.equal(askedQuestion("Two questions:\n    where is the tier-up flag set?"), "where is the tier-up flag set?");
+  const context = "The cache keeps one entry per module. ".repeat(20);
+  assert.equal(
+    askedQuestion(`How does the cache work? ${context}Why would you choose a WeakMap here?`),
+    "How does the cache work?",
+  );
+  assert.equal(isQuestion("Did you lie? Did you actually run the tests?"), false);
+});

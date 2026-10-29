@@ -169,7 +169,8 @@ function firstPositional(args: string[], valueOpts: Set<string>): string | undef
 // or if it is the turn's first or last sentence and starts with a question word. A
 // sentence with a request clause ("can you fix X?", "Given that, could you ...") is not
 // seeking, nor is "Do not ..."/"Don't ...". A turn that opens with a tool's reply tag,
-// or that scolds the agent ("did you lie", "why would you"), is not seeking at all.
+// is not seeking at all; a sentence that scolds the agent ("did you lie", "why would
+// you") is dropped, and the turn's other sentences still count.
 // Returns the question sentences, with code and URLs restored (the search query), or null.
 const SYSTEM_REPLY_TAG = /^<(send_user_message_question_reply|external_codex_apps_|environment_context|permissions|collaboration_mode|turn_aborted)\b/i;
 const RHETORICAL_SCOLDING =
@@ -180,10 +181,10 @@ const REQUEST = /^(?:can|could|would|will) you\b|^please\s+\S|^do\s+not\b|^don['
 const OPENER = /^(?:[*_"'`(\[]+|(?:also|and|then|so|ok|okay|now|but|hey|btw|next|finally|lastly)\b[,:]?\s*)+/i;
 const QUESTION_START = /^(what|how|why|where|when|which|who|whose|is|are|does|do(?!\s+not\b|n['’]?t\b)|did|should|has|have)\b/i;
 // Placeholders for inline code and URLs: private-use characters around an index.
-const HOLD_OPEN = "";
-const HOLD_CLOSE = "";
+const HOLD_OPEN = "\uE000";
+const HOLD_CLOSE = "\uE001";
 // Closing formatting after the "?" is allowed: **Why does this fail?** or "Why?".
-const QUESTION_END = /[\p{L}\p{N}"']\?+[*_"'`)\]]*$/u;
+const QUESTION_END = /[\p{L}\p{N}"'\uE001]\?+[*_"'`)\]]*$/u;
 const CONTAINER = /^(?:(?:[-*+]|\d+[.)])\s+|>\s*)+/;
 const FENCE = /^(`{3,}|~{3,})/;
 const INLINE_CODE = /(`+)[^`]*?\1/g;
@@ -196,7 +197,18 @@ const URL_SPAN = /\b[a-z][a-z0-9+.-]*:\/\/\S+/gi;
 function proseLines(text: string, held: string[]): string[] {
   const lines: string[] = [];
   let fence: string | null = null;
+  // An indented code block (4+ spaces or a tab) starts after a blank line and runs
+  // while lines stay indented or blank.
+  let afterBlank = true;
+  let indentedCode = false;
   for (const raw of text.split("\n")) {
+    const indented = /^(?: {4}|\t)/.test(raw) && raw.trim() !== "";
+    if (fence === null && indented && (afterBlank || indentedCode)) {
+      indentedCode = true;
+      continue;
+    }
+    indentedCode = indentedCode && raw.trim() === "";
+    afterBlank = raw.trim() === "";
     const line = raw.trim().replace(CONTAINER, "");
     const marker = FENCE.exec(line)?.[1];
     if (fence !== null) {
@@ -222,14 +234,13 @@ export function askedQuestion(text: string): string | null {
   if (SYSTEM_REPLY_TAG.test(text.trim())) return null;
   const held: string[] = [];
   const sentences = proseLines(text, held).flatMap((l) => l.split(/(?<=[.!?][*_"'`)\]]*)\s+/).filter(Boolean));
-  if (sentences.some((s) => RHETORICAL_SCOLDING.test(s))) return null;
   const found = sentences.filter((s, i) => {
-    if (isRequest(s)) return false;
+    if (isRequest(s) || RHETORICAL_SCOLDING.test(s)) return false;
     const edge = i === 0 || i === sentences.length - 1;
     return QUESTION_END.test(s) || (edge && QUESTION_START.test(s.replace(OPENER, "")));
   });
   if (found.length === 0) return null;
-  const restore = (s: string) => s.replace(/(\d+)/g, (_, i: string) => held[Number(i)] ?? "");
+  const restore = (s: string) => s.replace(/\uE000(\d+)\uE001/g, (_, i: string) => held[Number(i)] ?? "");
   return found.map(restore).join(" ").slice(0, 500);
 }
 
