@@ -1,7 +1,8 @@
 import { chmodSync, existsSync, readFileSync, renameSync, rmSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { MinerConfig } from "./config.js";
-import { parseChromeHistory, findChromiumHistoryFiles } from "./parsers/chrome.js";
+import { findAntigravityTranscripts, parseAntigravityTranscript } from "./parsers/antigravity.js";
+import { parseChromeHistory, discoverChromiumHistoryFiles } from "./parsers/chrome.js";
 import { parseCodexSession } from "./parsers/codex.js";
 import { censusFiles, listFiles } from "./parsers/files.js";
 import { assertOutsideRepo } from "./paths.js";
@@ -77,8 +78,13 @@ export function ingest(cfg: MinerConfig): IngestSummary {
       add("zsh", cfg.zshHistory, kept, r.counts);
     } else missing("zsh", cfg.zshHistory);
 
-    const histories = findChromiumHistoryFiles(cfg.chromiumRoots);
-    if (histories.length === 0) missing("chrome", cfg.chromiumRoots.join(", "));
+    const { files: histories, unreadableRoots } = discoverChromiumHistoryFiles(cfg.chromiumRoots);
+    for (const u of unreadableRoots) {
+      const counts = emptyCounts();
+      bump(counts.unknown, "unreadable_history_root");
+      add("chrome", u.root, [], counts, u.error);
+    }
+    if (histories.length === 0 && unreadableRoots.length === 0) missing("chrome", cfg.chromiumRoots.join(", "));
     for (const h of histories) {
       let r;
       try {
@@ -104,13 +110,24 @@ export function ingest(cfg: MinerConfig): IngestSummary {
       record("codex_session", `${cfg.codexDir} (${sessions.length} files)`, counts);
     }
 
-    const census = censusFiles(cfg.antigravityDir);
-    if (census.files === 0) missing("antigravity_session", cfg.antigravityDir);
-    else {
+    const transcripts = findAntigravityTranscripts(cfg.antigravityDir);
+    if (transcripts.length === 0) {
+      const census = censusFiles(cfg.antigravityDir);
+      if (census.files === 0) missing("antigravity_session", cfg.antigravityDir);
+      else {
+        const counts = emptyCounts();
+        counts.read = census.files;
+        bump(counts.skipped, "no_transcripts_found", census.files);
+        add("antigravity_session", cfg.antigravityDir, [], counts, `${census.files} files, 0 transcripts`);
+      }
+    } else {
       const counts = emptyCounts();
-      counts.read = census.files;
-      bump(counts.skipped, "no_parser_yet", census.files);
-      add("antigravity_session", cfg.antigravityDir, [], counts, `${census.files} files, ${census.bytes} bytes; not parsed`);
+      for (const t of transcripts) {
+        const r = parseAntigravityTranscript(readFileSync(t, "utf8"), t);
+        insertEvents(r.events);
+        mergeCounts(counts, r.counts);
+      }
+      record("antigravity_session", `${cfg.antigravityDir} (${transcripts.length} transcripts)`, counts);
     }
 
     const repos = discoverRepos(cfg.gitRoots, cfg.gitMaxDepth);

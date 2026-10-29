@@ -22,7 +22,7 @@ npm ci
 npm run mine -- probe
 ```
 
-Prints record types, key names, and counts for `~/.codex/sessions` and `~/.gemini/antigravity/brain`. No content. Paste it back so the Codex parser can be checked and an Antigravity parser written against your real files.
+Prints record types, key names, and counts for `~/.codex/sessions` and `~/.gemini/antigravity/brain`. No content; undocumented string values and UUID keys are redacted.
 
 ## 3. Ingest and report
 
@@ -31,9 +31,20 @@ npm run mine -- ingest
 npm run mine -- report
 ```
 
-`ingest` rebuilds `~/.gadget/miner.db` from zsh history, the zsh hook log, Chrome-family browser history (copied before reading), Codex sessions, and `git log` of repos under your home directory (depth 4). It prints, per source, how many records it read, kept, skipped (with reasons), and did not recognize.
+`ingest` rebuilds `~/.gadget/miner.db` from zsh history, the zsh hook log, Chrome-family browser history (copied before reading; search queries become `WEB_SEARCH` and documentation visits become `HELP_LOOKUP`), Codex sessions (`~/.codex/sessions/**/*.jsonl`, including user turns, assistant turns, and `CommandExecution` / `exec_command` tool exit codes), Antigravity transcripts (`~/.gemini/antigravity/brain/<convId>/.system_generated/logs/transcript_full.jsonl`, including `USER_INPUT`, `PLANNER_RESPONSE`, and `run_command` tool exit codes), and `git log` of repos under your home directory (depth 4). It prints, per source, how many records it read, kept, skipped (with reasons), and did not recognize.
 
 `report` writes `~/.gadget/reports/<timestamp>/report.md` and `labels.csv`, outside the repo (it refuses to write inside it). The summary printed to the terminal has counts and rates only.
+
+## 4. Offline replay and MCP recall server
+
+```bash
+npm run mine -- replay
+npm run mine -- mcp
+```
+
+`replay` evaluates the upper-bound oracle, the realistic context-only baseline, and `CalibratedAnticipator` across all mined episodes with a strict `asOfMs = seekStartMs` cutoff and deterministic `verifyClaim` checks.
+
+`mcp` starts the read-only JSON-RPC 2.0 MCP server on stdio exposing `recall(query)` and logging tool calls to `~/.gadget/mcp_calls.jsonl`.
 
 Overrides go in `~/.gadget/config.json`, for example:
 
@@ -41,7 +52,7 @@ Overrides go in `~/.gadget/config.json`, for example:
 { "gitRoots": ["/Users/me/code"], "gitMaxDepth": 3, "sampleSize": 25, "seed": 7 }
 ```
 
-## 4. Label the sample
+## 5. Label the sample
 
 Open `report.md`, then fill in `labels.csv` for the 25 sampled episodes: was it real seeking (Y/N), and was the answer already in your data (Y/N). If fewer than 20 look like real seeking, seek detection gets fixed before anything else.
 

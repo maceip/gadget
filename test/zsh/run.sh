@@ -20,10 +20,12 @@ echo "zsh hook existing log: OK (mode 600)"
 rm -rf "$tmp3"
 
 # 3. Real interactive shell sourcing the hook from .zshrc: hooks must fire on their own.
+# +Z disables ZLE (which would otherwise open /dev/tty when a controlling terminal is present)
+# and -d skips /etc/z* global files while keeping -i interactive hook execution.
 tmp2=$(mktemp -d)
 echo "source $repo/capture/zsh/gadget.zsh" > "$tmp2/.zshrc"
 printf 'echo one\nfalse\n echo hidden\necho two\nexit\n' \
-  | (cd "$tmp2" && HOME="$tmp2" ZDOTDIR="$tmp2" zsh -i >/dev/null 2>&1)
+  | (cd "$tmp2" && HOME="$tmp2" ZDOTDIR="$tmp2" zsh +Z -d -i >/dev/null 2>&1)
 node -e '
   const fs = require("fs");
   const recs = fs.readFileSync(process.argv[1], "utf8").split("\n").filter(Boolean).map(JSON.parse);

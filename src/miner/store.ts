@@ -122,7 +122,8 @@ export class EventStore {
     const rows = this.db
       .prepare(
         `SELECT event_id, source, timestamp_ms, workspace_path,
-                CASE WHEN source IN ('zsh', 'zsh_hook') THEN content_text ELSE substr(content_text, 1, 200) END AS content_text,
+                CASE WHEN source IN ('zsh', 'zsh_hook') OR json_extract(metadata_json, '$.kind') = 'tool_command'
+                     THEN content_text ELSE substr(content_text, 1, 200) END AS content_text,
                 source_uri, metadata_json, seeks_json
            FROM events ORDER BY timestamp_ms, rowid`,
       )
@@ -137,6 +138,27 @@ export class EventStore {
       metadataJson: r.metadata_json as string,
       seeks: JSON.parse(r.seeks_json as string) as Seek[],
     }));
+  }
+
+  // Fetches the full untruncated event by eventId (used for claim verification and searchers).
+  getEventById(eventId: string): EpisodicEvent | undefined {
+    const r = this.db
+      .prepare(
+        `SELECT event_id, source, timestamp_ms, workspace_path, content_text, source_uri, metadata_json
+           FROM events WHERE event_id = ?`,
+      )
+      .get(eventId) as Record<string, unknown> | undefined;
+    if (!r) return undefined;
+    const ev: EpisodicEvent = {
+      eventId: r.event_id as string,
+      source: r.source as Source,
+      timestampMs: r.timestamp_ms as number,
+      contentText: r.content_text as string,
+      sourceUri: r.source_uri as string,
+      metadataJson: r.metadata_json as string,
+    };
+    if (typeof r.workspace_path === "string") ev.workspacePath = r.workspace_path;
+    return ev;
   }
 
   // Best FTS match among non-seek events strictly older than beforeMs.

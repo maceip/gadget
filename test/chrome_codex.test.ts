@@ -154,9 +154,11 @@ test("codex: messages, workspace from session_meta, injected context, unknown sh
   );
 });
 
-test("codex: owner text after injected context blocks is kept; context-only turns are dropped", () => {
+test("codex: owner text after injected context blocks is kept; context-only turns are dropped; user XML tags are preserved", () => {
   assert.equal(stripLeadingContext("<environment_context>cwd=/w</environment_context>\n\nwhere is the flag?"), "where is the flag?");
-  assert.equal(stripLeadingContext("<a>x</a><b>y</b>"), "");
+  assert.equal(stripLeadingContext("<environment_context>x</environment_context><permissions>y</permissions>"), "");
+  assert.equal(stripLeadingContext("<context>user notes</context>\nhow does this work?"), "<context>user notes</context>\nhow does this work?");
+  assert.equal(stripLeadingContext("<request>why did the build fail?</request>"), "<request>why did the build fail?</request>");
   assert.equal(stripLeadingContext("<unclosed> keep this"), "<unclosed> keep this");
   assert.equal(stripLeadingContext("plain question?"), "plain question?");
 

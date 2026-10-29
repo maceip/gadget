@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { DAY_MS, type CeilingResult, type EpisodeEval, type Rate } from "./ceiling.js";
 import type { MinerConfig } from "./config.js";
@@ -163,9 +163,15 @@ export function writeReport(input: ReportInput, outDirOverride?: string): { dir:
   const reportPath = join(dir, "report.md");
   const labelsPath = join(dir, "labels.csv");
   // "wx": create only. Never overwrite, and never follow an existing file or symlink
-  // at these names (it could point into the repo).
+  // at these names (it could point into the repo). If labels.csv fails after report.md
+  // is created, remove report.md so a half-written pair is never left behind.
   writeFileSync(reportPath, markdown, { mode: 0o600, flag: "wx" });
-  writeFileSync(labelsPath, csv, { mode: 0o600, flag: "wx" });
+  try {
+    writeFileSync(labelsPath, csv, { mode: 0o600, flag: "wx" });
+  } catch (err) {
+    rmSync(reportPath, { force: true });
+    throw err;
+  }
   return { dir, reportPath, labelsPath };
 }
 

@@ -8,9 +8,77 @@ import type { MinerConfig } from "./config.js";
 import { censusFiles, listFiles } from "./parsers/files.js";
 
 const SAFE_KEY = /^[A-Za-z_][A-Za-z0-9_.-]{0,39}$/;
-const SAFE_VALUE = /^[a-z][a-z0-9_.-]{0,39}$/i;
+const UUID_KEY = /^[0-9a-f]{8}-[0-9a-f]{4}-/i;
 const MAX_FILE_BYTES = 50 * 1024 * 1024;
 const NO_TAG = "(no leading tag)";
+
+// Documented protocol enum labels for `type`, `role`, and `content[].type` across Codex and
+// Antigravity transcripts. Any string not in this set is reported as its primitive type
+// ("string") so owner-controlled values in undocumented fields can never leak through probe.
+export const KNOWN_ENUM_VALUES = new Set([
+  "session_meta",
+  "response_item",
+  "event_msg",
+  "turn_context",
+  "compacted",
+  "token_usage_record",
+  "world_state",
+  "realtime_item",
+  "message",
+  "reasoning",
+  "function_call",
+  "function_call_output",
+  "custom_tool_call",
+  "custom_tool_call_output",
+  "local_shell_call",
+  "web_search_call",
+  "additional_tools",
+  "item_completed",
+  "token_count",
+  "thread_settings_applied",
+  "task_started",
+  "task_complete",
+  "turn_aborted",
+  "entered_review_mode",
+  "exited_review_mode",
+  "realtime_session_started",
+  "realtime_session_closed",
+  "transcript_segment",
+  "agent_message",
+  "user_message",
+  "agent_reasoning",
+  "user",
+  "assistant",
+  "developer",
+  "system",
+  "tool",
+  "input_text",
+  "output_text",
+  "text",
+  "input_image",
+  "summary_text",
+  "refusal",
+  "USER_INPUT",
+  "PLANNER_RESPONSE",
+  "GENERIC",
+  "SYSTEM_MESSAGE",
+  "CHECKPOINT",
+  "ERROR_MESSAGE",
+  "TOOL_CALL",
+  "TOOL_RESPONSE",
+  "SUBAGENT_RESPONSE",
+  "USER_EXPLICIT",
+  "USER_IMPLICIT",
+  "MODEL",
+  "SYSTEM",
+  "SYSTEM_SDK",
+  "DONE",
+  "RUNNING",
+  "ERROR",
+  "INVALID",
+  "CANCELLED",
+  "PENDING",
+]);
 
 // A leading tag name is printed only if it appears in at least this many files (and in at
 // least 10% of the files that have user messages). Tool-injected context appears in most
@@ -19,13 +87,13 @@ export const TAG_MIN_FILES = 3;
 
 export function keyList(o: Record<string, unknown>): string {
   return Object.keys(o)
-    .map((k) => (SAFE_KEY.test(k) ? k : "<key>"))
+    .map((k) => (SAFE_KEY.test(k) && !UUID_KEY.test(k) ? k : "<key>"))
     .sort()
     .join(",");
 }
 
 function label(v: unknown): string {
-  return typeof v === "string" && SAFE_VALUE.test(v) ? v : typeof v;
+  return typeof v === "string" && KNOWN_ENUM_VALUES.has(v) ? v : typeof v;
 }
 
 function isObject(v: unknown): v is Record<string, unknown> {

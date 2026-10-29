@@ -1,5 +1,6 @@
 // Minimal POSIX-ish shell word splitter, enough to classify commands.
-// Not a shell: command substitution and expansions are kept as literal text.
+// Command substitutions ($(...) and `...` outside single quotes) are kept inside the
+// outer word and also parsed recursively so lookups inside them are classified.
 
 export interface SimpleCommand {
   argv: string[];
@@ -8,8 +9,58 @@ export interface SimpleCommand {
 
 type Token = { kind: "word"; value: string } | { kind: "op"; value: string };
 
-export function tokenize(line: string): Token[] {
+function readDollarParen(line: string, start: number): { raw: string; inner: string; end: number } {
+  let depth = 1;
+  let i = start + 2;
+  while (i < line.length && depth > 0) {
+    const c = line[i]!;
+    if (c === "\\" && i + 1 < line.length) {
+      i += 2;
+      continue;
+    }
+    if (c === "'") {
+      const end = line.indexOf("'", i + 1);
+      i = end < 0 ? line.length : end + 1;
+      continue;
+    }
+    if (c === '"') {
+      i++;
+      while (i < line.length && line[i] !== '"') {
+        if (line[i] === "\\" && i + 1 < line.length) i += 2;
+        else i++;
+      }
+      if (i < line.length) i++;
+      continue;
+    }
+    if (c === "(") depth++;
+    else if (c === ")") {
+      depth--;
+      if (depth === 0) return { raw: line.slice(start, i + 1), inner: line.slice(start + 2, i), end: i };
+    }
+    i++;
+  }
+  return { raw: line.slice(start), inner: line.slice(start + 2), end: line.length };
+}
+
+function readBacktick(line: string, start: number): { raw: string; inner: string; end: number } {
+  let i = start + 1;
+  let inner = "";
+  while (i < line.length && line[i] !== "`") {
+    if (line[i] === "\\" && i + 1 < line.length && "\\$`\"".includes(line[i + 1]!)) {
+      inner += line[i + 1];
+      i += 2;
+    } else {
+      inner += line[i];
+      i++;
+    }
+  }
+  const end = i < line.length ? i : line.length;
+  return { raw: line.slice(start, Math.min(end + 1, line.length)), inner, end };
+}
+
+function tokenizeInternal(line: string): { tokens: Token[]; substitutions: string[] } {
   const tokens: Token[] = [];
+  const substitutions: string[] = [];
   let word = "";
   let inWord = false;
   // Heredocs seen on the current line; their bodies start after the next newline.
@@ -43,7 +94,26 @@ export function tokenize(line: string): Token[] {
     if (c === '"') {
       i++;
       while (i < line.length && line[i] !== '"') {
-        if (line[i] === "\\" && i + 1 < line.length && '"\\$`'.includes(line[i + 1]!)) i++;
+        if (line[i] === "\\" && i + 1 < line.length && '"\\$`'.includes(line[i + 1]!)) {
+          i++;
+          word += line[i];
+          i++;
+          continue;
+        }
+        if (line[i] === "$" && line[i + 1] === "(") {
+          const sub = readDollarParen(line, i);
+          word += sub.raw;
+          if (sub.inner.trim()) substitutions.push(sub.inner);
+          i = sub.end + 1;
+          continue;
+        }
+        if (line[i] === "`") {
+          const sub = readBacktick(line, i);
+          word += sub.raw;
+          if (sub.inner.trim()) substitutions.push(sub.inner);
+          i = sub.end + 1;
+          continue;
+        }
         word += line[i];
         i++;
       }
@@ -51,14 +121,18 @@ export function tokenize(line: string): Token[] {
       continue;
     }
     if (c === "$" && line[i + 1] === "(") {
-      // keep $( ... ) as literal text inside the current word
-      let depth = 0;
-      for (; i < line.length; i++) {
-        const d = line[i]!;
-        word += d;
-        if (d === "(") depth++;
-        else if (d === ")" && --depth === 0) break;
-      }
+      const sub = readDollarParen(line, i);
+      word += sub.raw;
+      if (sub.inner.trim()) substitutions.push(sub.inner);
+      i = sub.end;
+      inWord = true;
+      continue;
+    }
+    if (c === "`") {
+      const sub = readBacktick(line, i);
+      word += sub.raw;
+      if (sub.inner.trim()) substitutions.push(sub.inner);
+      i = sub.end;
       inWord = true;
       continue;
     }
@@ -149,7 +223,11 @@ export function tokenize(line: string): Token[] {
     inWord = true;
   }
   flush();
-  return tokens;
+  return { tokens, substitutions };
+}
+
+export function tokenize(line: string): Token[] {
+  return tokenizeInternal(line).tokens;
 }
 
 const WRAPPERS = new Set(["sudo", "command", "builtin", "time", "noglob", "nocorrect", "nice", "nohup", "exec", "env"]);
@@ -199,6 +277,7 @@ export function stripWrappers(argv: string[]): string[] {
 }
 
 export function splitCommands(line: string): SimpleCommand[] {
+  const { tokens, substitutions } = tokenizeInternal(line);
   const commands: SimpleCommand[] = [];
   let argv: string[] = [];
   let pipedFrom: string[] | undefined;
@@ -209,7 +288,7 @@ export function splitCommands(line: string): SimpleCommand[] {
     pipedFrom = nextPiped && stripped.length > 0 ? stripped.slice(0, 2) : undefined;
     argv = [];
   };
-  for (const t of tokenize(line)) {
+  for (const t of tokens) {
     if (t.kind === "word") {
       if (skipNextWord) skipNextWord = false;
       else argv.push(t.value);
@@ -223,5 +302,8 @@ export function splitCommands(line: string): SimpleCommand[] {
     end(t.value === "|" || t.value === "|&");
   }
   end(false);
+  for (const sub of substitutions) {
+    commands.push(...splitCommands(sub));
+  }
   return commands;
 }

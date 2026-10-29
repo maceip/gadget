@@ -169,6 +169,36 @@ export function isQuestion(text: string): boolean {
   return /\?/.test(head) || /^(what|how|why|where|when|which|who|whose|is|are|does|do|did|should|has|have)\b/i.test(head);
 }
 
+const DOCS_HOSTS = /(^|\.)(docs\.rs|pkg\.go\.dev|devdocs\.io|developer\.mozilla\.org|developer\.apple\.com|learn\.microsoft\.com)$|^docs\.[^.]+\.[^.]+$|\.readthedocs\.(io|org)$/i;
+const DOCS_PATH = /^\/(docs|documentation|reference|manual|man|api)(\/|$)/i;
+
+// Detects a visit to a documentation page from its URL and title/contentText.
+export function docsSiteQuery(sourceUri: string, contentText: string): string | null {
+  let u: URL;
+  try {
+    u = new URL(sourceUri);
+  } catch {
+    return null;
+  }
+  if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+  if (u.pathname === "/" || u.pathname === "") return null;
+  const isDocs = DOCS_HOSTS.test(u.hostname) || DOCS_PATH.test(u.pathname);
+  if (!isDocs) return null;
+  const firstLine = contentText.split("\n")[0]?.trim() ?? "";
+  if (firstLine && !firstLine.startsWith("http://") && !firstLine.startsWith("https://")) {
+    return firstLine.slice(0, 200);
+  }
+  const slug = u.pathname
+    .split("/")
+    .filter(Boolean)
+    .slice(-2)
+    .join(" ")
+    .replace(/[-_]+/g, " ")
+    .replace(/\.[a-z0-9]+$/i, "")
+    .trim();
+  return slug || null;
+}
+
 // Every seek action in one event. A shell entry can hold several (`rg foo; rg bar`).
 export function classifyEventAll(e: EpisodicEvent): Seek[] {
   if (e.source === "zsh" || e.source === "zsh_hook") {
@@ -178,7 +208,11 @@ export function classifyEventAll(e: EpisodicEvent): Seek[] {
   }
   const meta = parseMeta(e.metadataJson);
   if (e.source === "chrome" && meta.kind === "search") return [{ kind: "WEB_SEARCH", query: e.contentText }];
-  if (e.source === "codex_session" && meta.role === "user" && isQuestion(e.contentText)) {
+  if (e.source === "chrome" && meta.kind === "visit") {
+    const q = docsSiteQuery(e.sourceUri, e.contentText);
+    return q ? [{ kind: "HELP_LOOKUP", query: q }] : [];
+  }
+  if ((e.source === "codex_session" || e.source === "antigravity_session") && meta.role === "user" && isQuestion(e.contentText)) {
     return [{ kind: "ASK_AGENT", query: e.contentText.trim().slice(0, 500) }];
   }
   return [];

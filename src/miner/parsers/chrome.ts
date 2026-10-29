@@ -37,21 +37,40 @@ export function searchTermFromUrl(url: string): string | null {
   return null;
 }
 
-// Returns every <root>/<profile>/History file under the given Chromium user-data roots.
-export function findChromiumHistoryFiles(roots: string[]): string[] {
+export interface ChromiumDiscovery {
+  files: string[];
+  unreadableRoots: Array<{ root: string; error: string }>;
+}
+
+// Discovers <root>/<profile>/History files under the given Chromium user-data roots,
+// recording roots that cannot be scanned (e.g. macOS TCC EPERM) instead of throwing.
+export function discoverChromiumHistoryFiles(roots: string[]): ChromiumDiscovery {
   const found: string[] = [];
+  const unreadableRoots: Array<{ root: string; error: string }> = [];
   for (const root of roots) {
     if (!existsSync(root)) continue;
-    for (const name of readdirSync(root)) {
+    let names: string[];
+    try {
+      names = readdirSync(root);
+    } catch (err) {
+      unreadableRoots.push({ root, error: String(err) });
+      continue;
+    }
+    for (const name of names) {
       const p = join(root, name, "History");
       try {
         if (statSync(p).isFile()) found.push(p);
       } catch {
-        // not a profile
+        // not a profile or unreadable
       }
     }
   }
-  return found.sort();
+  return { files: found.sort(), unreadableRoots };
+}
+
+// Returns every <root>/<profile>/History file under the given Chromium user-data roots.
+export function findChromiumHistoryFiles(roots: string[]): string[] {
+  return discoverChromiumHistoryFiles(roots).files;
 }
 
 const SIDE_FILES = ["-wal", "-journal"];

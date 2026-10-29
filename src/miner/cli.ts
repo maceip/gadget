@@ -1,11 +1,15 @@
 #!/usr/bin/env node
-// gadget history miner. Usage:
+// gadget history miner and runtime CLI. Usage:
 //   npm run mine -- ingest                      rebuild ~/.gadget/miner.db from your files
 //   npm run mine -- report [--seed N] [--out D] write the ceiling report and labels.csv
 //   npm run mine -- probe                       print Codex/Antigravity file structure (no content)
+//   npm run mine -- replay                      run Phase 1 replay harness (upper-bound, realistic, anticipator)
+//   npm run mine -- mcp                         run Phase 2 read-only MCP stdio server exposing recall(query)
 // Offline and read-only on every source. Config overrides: ~/.gadget/config.json.
 
 import { existsSync } from "node:fs";
+import { runStdioMcpServer } from "../mcp/server.js";
+import { formatReplayTable, runReplay } from "../runtime/replay.js";
 import { evaluateCeiling } from "./ceiling.js";
 import { loadConfig } from "./config.js";
 import { buildEpisodes } from "./episodes.js";
@@ -28,7 +32,7 @@ function flag(args: string[], name: string): string | undefined {
   return i >= 0 ? args[i + 1] : undefined;
 }
 
-function main(argv: string[]): number {
+async function main(argv: string[]): Promise<number> {
   checkNode();
   // Everything this tool writes (store, journals, reports) holds private data.
   process.umask(0o077);
@@ -82,9 +86,33 @@ function main(argv: string[]): number {
     return 0;
   }
 
-  console.error("usage: npm run mine -- ingest | report [--seed N] [--out DIR] | probe");
+  if (cmd === "replay") {
+    if (!existsSync(cfg.dbPath)) {
+      console.error(`no store at ${cfg.dbPath}; run: npm run mine -- ingest`);
+      return 1;
+    }
+    const store = new EventStore(cfg.dbPath, { readOnly: true });
+    try {
+      const events = store.allEventsSorted();
+      const episodes = buildEpisodes(events, cfg);
+      const summary = await runReplay(episodes, store);
+      console.log(formatReplayTable(summary));
+    } finally {
+      store.close();
+    }
+    return 0;
+  }
+
+  if (cmd === "mcp") {
+    await runStdioMcpServer();
+    return 0;
+  }
+
+  console.error("usage: npm run mine -- ingest | report [--seed N] [--out DIR] | probe | replay | mcp");
   return 2;
 }
 
 // exitCode, not exit(): stdout to a pipe is asynchronous and must drain first.
-process.exitCode = main(process.argv.slice(2));
+main(process.argv.slice(2)).then((code) => {
+  process.exitCode = code;
+});

@@ -24,11 +24,13 @@ interface ExitEvent {
 }
 
 // Exit-code state changes take effect when a command finishes, so they are replayed in
-// completion order (ties keep event order).
+// completion order (ties keep event order). Forward-captured zsh_hook events and backfilled
+// coding-agent tool commands (Codex CommandExecution / exec_command, Antigravity run_command)
+// carry exit codes and completion times.
 function exitEventsByEnd(events: StoredEvent[]): ExitEvent[] {
   const out: ExitEvent[] = [];
   events.forEach((e, order) => {
-    if (e.source !== "zsh_hook") return;
+    if (e.source !== "zsh_hook" && parseMeta(e.metadataJson).kind !== "tool_command") return;
     const exit = exitCode(e);
     const key = commandKey(e);
     if (exit === undefined || !key) return;
@@ -147,21 +149,83 @@ function findResolution(
 function isBackfillWorkEvent(e: StoredEvent): boolean {
   if (e.seeks.length > 0) return false;
   if (e.source === "zsh") return true;
-  return e.source === "codex_session" && parseMeta(e.metadataJson).role === "user";
+  return (e.source === "codex_session" || e.source === "antigravity_session") && parseMeta(e.metadataJson).role === "user";
+}
+
+// Options that take a separate word as their value across common build/test/dev tools.
+// Skipping their values prevents `npm --workspace api test` and `npm --workspace api install`
+// from sharing the key (cwd, npm, api).
+const COMMAND_VALUE_OPTS = new Set([
+  "-C",
+  "-c",
+  "-f",
+  "--file",
+  "--config",
+  "-w",
+  "--workspace",
+  "--prefix",
+  "--cwd",
+  "--dir",
+  "--filter",
+  "--manifest-path",
+  "-p",
+  "--package",
+  "--bin",
+  "--example",
+  "--target",
+  "--features",
+  "-n",
+  "--namespace",
+  "--context",
+  "--kubeconfig",
+  "-H",
+  "--host",
+  "-k",
+  "-m",
+  "-o",
+  "--git-dir",
+  "--work-tree",
+  "-t",
+  "--type",
+  "-g",
+  "--glob",
+  "-e",
+]);
+
+const RUNNER_TOOLS = new Set(["npm", "pnpm", "yarn", "bun"]);
+
+function positionalArgs(args: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (a === "--") break;
+    if (a.startsWith("-")) {
+      if (COMMAND_VALUE_OPTS.has(a)) i++;
+      continue;
+    }
+    out.push(a);
+  }
+  return out;
 }
 
 // Identifies "the same command" across a failure and a later success: the working
 // directory, the program, and its first non-option argument ("npm test" in /w, not
-// "npm install"). Flags may change between attempts and are ignored. A shell list or
-// pipeline (`npm test || true`, `npm test | tee log`) has one exit code for the whole
-// line, which cannot be attributed to any one command, so it gets no key.
+// "npm install"). Flags (and their option values) may change between attempts and are
+// ignored. A shell list or pipeline (`npm test || true`, `npm test | tee log`) has one
+// exit code for the whole line, which cannot be attributed to any one command, so it
+// gets no key.
 export function commandKey(e: StoredEvent): string | undefined {
   const commands = splitCommands(e.contentText);
   if (commands.length !== 1) return undefined;
   const argv = commands[0]!.argv;
-  if (!argv[0]) return undefined;
-  const sub = argv.slice(1).find((a) => !a.startsWith("-")) ?? "";
-  return [e.workspacePath ?? "", argv[0], sub].join("\u0000");
+  const prog = argv[0];
+  if (!prog) return undefined;
+  const pos = positionalArgs(argv.slice(1));
+  let sub = pos[0] ?? "";
+  if (RUNNER_TOOLS.has(prog) && (sub === "run" || sub === "exec") && pos[1]) {
+    sub = pos[1] === "test" ? "test" : `${sub}:${pos[1]}`;
+  }
+  return [e.workspacePath ?? "", prog, sub].join("\u0000");
 }
 
 function exitCode(e: StoredEvent): number | undefined {
