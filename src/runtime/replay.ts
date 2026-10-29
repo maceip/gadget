@@ -3,6 +3,7 @@
 // strictly with `asOfMs = episode.seekStartMs` for every searcher.
 
 import { keyTokens } from "../miner/ceiling.js";
+import { median } from "../miner/report.js";
 import type { EventStore } from "../miner/store.js";
 import type { SeekingEpisode } from "../miner/types.js";
 import { CalibratedAnticipator } from "./anticipator.js";
@@ -312,11 +313,4 @@ function buildNegativeWindows(episodes: SeekingEpisode[], store: EventStore, max
 
 function pct(x: number): string {
   return `${(100 * x).toFixed(1)}%`;
-}
-
-function median(xs: number[]): number {
-  if (xs.length === 0) return 0;
-  const sorted = [...xs].sort((a, b) => a - b);
-  const mid = sorted.length >> 1;
-  return sorted.length % 2 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
 }

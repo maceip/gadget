@@ -72,3 +72,11 @@ export function mergeCounts(into: ParseCounts, from: ParseCounts): void {
   for (const [k, v] of Object.entries(from.skipped)) bump(into.skipped, k, v);
   for (const [k, v] of Object.entries(from.unknown)) bump(into.unknown, k, v);
 }
+
+export function isObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+export function safeLabel(s: string): string {
+  return /^[a-z0-9_./-]{1,60}$/i.test(s) ? s : "<unprintable>";
+}

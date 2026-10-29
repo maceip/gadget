@@ -6,6 +6,7 @@ import { readFileSync, statSync } from "node:fs";
 import { extname } from "node:path";
 import type { MinerConfig } from "./config.js";
 import { censusFiles, listFiles } from "./parsers/files.js";
+import { isObject } from "./types.js";
 
 const SAFE_KEY = /^[A-Za-z_][A-Za-z0-9_.-]{0,39}$/;
 const UUID_KEY = /^[0-9a-f]{8}-[0-9a-f]{4}-/i;
@@ -94,10 +95,6 @@ export function keyList(o: Record<string, unknown>): string {
 
 function label(v: unknown): string {
   return typeof v === "string" && KNOWN_ENUM_VALUES.has(v) ? v : typeof v;
-}
-
-function isObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
 // One line of JSON -> a structural signature with no content in it.

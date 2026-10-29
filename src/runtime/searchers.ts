@@ -6,6 +6,7 @@ import { appendFileSync, chmodSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { ftsMatch, keyTokens } from "../miner/ceiling.js";
 import { assertOutsideRepo } from "../miner/paths.js";
+import { parseReflog } from "../miner/parsers/git.js";
 import type { EventStore } from "../miner/store.js";
 import type { EpisodicEvent, Source } from "../miner/types.js";
 import type { FreshnessStatus, Hit, Searcher } from "./types.js";
@@ -58,11 +59,14 @@ export function checkEventFreshness(
   if (flagMatch && workspacePath && existsSync(workspacePath)) {
     const flag = flagMatch[0]!;
     const commit = commitBefore(workspacePath, asOfMs);
-    if (commit) {
-      const hits = gitGrepCount(workspacePath, commit, flag);
-      const checkDesc = `git grep -- ${flag} ${commit.slice(0, 7)}: ${hits} hits`;
-      return { freshness: "CURRENT", freshnessCheck: checkDesc };
+    if (!commit) {
+      // No HEAD reflog entry before asOfMs: the checkout at that moment is unknown, so
+      // nothing was checked and the hit cannot be called CURRENT.
+      return { freshness: "UNKNOWN", freshnessCheck: `no HEAD reflog entry before asOfMs=${asOfMs}: repo state unknown` };
     }
+    const hits = gitGrepCount(workspacePath, commit, flag);
+    const checkDesc = `git grep -- ${flag} ${commit.slice(0, 7)}: ${hits} hits`;
+    return { freshness: "CURRENT", freshnessCheck: checkDesc };
   }
 
   return {
@@ -298,15 +302,20 @@ export class WebPublicSearcher implements Searcher {
   }
 }
 
+// The commit HEAD pointed at just before asOfMs, from HEAD's reflog (local checkout,
+// commit, reset, and pull times). Not `rev-list --before`: that picks by committer time,
+// and a fetch can bring in commits with committer times long before they were here.
+// Before the oldest reflog entry the state is unknown, so nothing is returned.
 function commitBefore(repo: string, asOfMs: number): string | null {
   try {
-    const sec = Math.max(0, Math.floor((asOfMs - 1) / 1000));
     const out = execFileSync(
       "git",
-      ["--no-optional-locks", "-C", repo, "rev-list", "-n", "1", `--before=${sec}`, "--all"],
-      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
-    ).trim();
-    return /^[0-9a-f]{40}$/.test(out) ? out : null;
+      ["--no-optional-locks", "-C", repo, "log", "-g", "--date=unix", "--format=%H\u001f%gD", "HEAD"],
+      // An active repo's HEAD reflog can pass the 1 MiB default and fail with ENOBUFS.
+      { encoding: "utf8", maxBuffer: 1 << 30, stdio: ["ignore", "pipe", "ignore"] },
+    );
+    const before = parseReflog(out).filter((e) => e.atMs < asOfMs);
+    return before.at(-1)?.sha ?? null;
   } catch {
     return null;
   }

@@ -5,21 +5,7 @@ import { test } from "node:test";
 import { defaultConfig } from "../src/miner/config.js";
 import { readLabelsCsv, startWorkbenchServer } from "../src/web/server.js";
 import { fakeHome } from "./fixtures/fake_home.js";
-
-// Dynamically resolves Playwright from NODE_PATH or local cache when available.
-async function loadPlaywright(): Promise<any | null> {
-  const candidates = ["playwright", "/Users/mac/outbox/web/node_modules/playwright/index.js"];
-  for (const mod of candidates) {
-    try {
-      const m = await import(mod);
-      const resolved = m.chromium ? m : m.default;
-      if (resolved && resolved.chromium) return resolved;
-    } catch {
-      // try next
-    }
-  }
-  return null;
-}
+import { loadPlaywright } from "./helpers.js";
 
 test("playwright UI e2e: exercises every interactive workbench control and verifies real backend labels.csv state transitions", async (t) => {
   const pw = await loadPlaywright();

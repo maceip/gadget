@@ -1,4 +1,5 @@
 import { mkdtempSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,4 +34,29 @@ export function stored(e: EpisodicEvent): StoredEvent {
     metadataJson: e.metadataJson,
     seeks: classifyEventAll(e),
   };
+}
+
+// Playwright is not a dependency. Browser tests use it when the machine has it
+// (`import`, `require` resolution honoring NODE_PATH, or local installation) and skip otherwise.
+export async function loadPlaywright(): Promise<any | null> {
+  const fromModule = (m: any) => (m?.chromium ? m : m?.default?.chromium ? m.default : null);
+  try {
+    const m = fromModule(await import("playwright" as string));
+    if (m) return m;
+  } catch {
+    // not importable from here
+  }
+  try {
+    const m = fromModule(createRequire(import.meta.url)("playwright"));
+    if (m) return m;
+  } catch {
+    // not in require path
+  }
+  try {
+    const m = fromModule(await import("/Users/mac/outbox/web/node_modules/playwright/index.js" as string));
+    if (m) return m;
+  } catch {
+    // not installed at fallback path
+  }
+  return null;
 }

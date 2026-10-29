@@ -2,6 +2,7 @@
 // Anything surfaced or written to the brief must pass verifyClaim. No LLM in this path.
 
 import type { EventStore } from "../miner/store.js";
+import { verifyEntitiesAgainstSources } from "../triggers/memoir_saliency_guard.js";
 import type { Claim, Evidence, Hit } from "./types.js";
 
 const CODE_OR_STATE_PATTERN =
@@ -28,6 +29,7 @@ export function verifyClaim(
     return { passed: false, failures };
   }
 
+  const sourceTexts: string[] = [];
   for (let i = 0; i < c.evidence.length; i++) {
     const ev: Evidence = c.evidence[i]!;
     if (!ev.sourceEventId) {
@@ -39,6 +41,7 @@ export function verifyClaim(
       failures.push(`evidence[${i}]: source event ${ev.sourceEventId} does not exist`);
       continue;
     }
+    sourceTexts.push(sourceEvent.contentText);
     if (!(sourceEvent.timestampMs < asOfMs)) {
       failures.push(
         `evidence[${i}]: source event ${ev.sourceEventId} (${sourceEvent.timestampMs}) is not strictly older than surfacing time (${asOfMs})`,
@@ -79,6 +82,13 @@ export function verifyClaim(
       } else if (f.freshness !== "CURRENT") {
         failures.push(`evidence[${i}]: freshness is ${f.freshness}, expected CURRENT (${f.freshnessCheck})`);
       }
+    }
+  }
+
+  if (failures.length === 0 && sourceTexts.length > 0) {
+    const entityCheck = verifyEntitiesAgainstSources(c.text, sourceTexts);
+    if (!entityCheck.passed) {
+      failures.push(`unverified entities in claim: ${entityCheck.hallucinatedEntities.join(", ")}`);
     }
   }
 

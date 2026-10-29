@@ -1,5 +1,5 @@
 import { makeEvent } from "../event.js";
-import { bump, emptyCounts, type EpisodicEvent, type ParseResult } from "../types.js";
+import { bump, emptyCounts, isObject, safeLabel, type EpisodicEvent, type ParseResult } from "../types.js";
 
 // Parses a Codex CLI rollout file (~/.codex/sessions/**/*.jsonl).
 //
@@ -250,12 +250,4 @@ function shapeKey(o: Record<string, unknown>, payload: Record<string, unknown> |
   const t = typeof o.type === "string" ? o.type : "no_type";
   const pt = payload && typeof payload.type === "string" ? `/${payload.type}` : "";
   return safeLabel(t + pt);
-}
-
-function safeLabel(s: string): string {
-  return /^[a-z0-9_./-]{1,60}$/i.test(s) ? s : "<unprintable>";
-}
-
-function isObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
 }

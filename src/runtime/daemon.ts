@@ -15,6 +15,8 @@ import { withSeeks } from "../miner/seek.js";
 import { EventStore, type StoredEvent } from "../miner/store.js";
 import type { EpisodicEvent, Seek, SeekingEpisode } from "../miner/types.js";
 import { readLabelsCsv } from "../web/server.js";
+import { OpenChronicleEventDispatcher } from "../triggers/desktop_activity_commitments.js";
+import { computeAdaptiveCadenceMs } from "../triggers/governed_loop_cadence.js";
 import { CalibratedAnticipator, type EpisodeLabel } from "./anticipator.js";
 import { FtsEventsSearcher } from "./searchers.js";
 import { BriefWorkspaceSink } from "./sink.js";
@@ -39,6 +41,7 @@ export interface DaemonStatus {
   lastTickAt: string;
   ticks: number;
   insertedEventsTotal: number;
+  recommendedIntervalMs: number;
   lastScreenApp: string | null;
   lastScreenTitle: string | null;
   lastScreenLines: number;
@@ -55,6 +58,12 @@ export class AmbientCatalogDaemon {
   private lastClipboardChangeCount: number | undefined;
   private lastFocusedText: string | undefined;
   private lastScreenText: string | undefined;
+  private readonly screenDispatcher = new OpenChronicleEventDispatcher({
+    debounceMs: 0,
+    dedupIntervalMs: 1000,
+    minCaptureGapMs: 2000,
+    sameWindowDedupMs: 5000,
+  });
   private readonly parsedLineCounts = new Map<string, number>();
   private cachedEpisodes: SeekingEpisode[] | null = null;
   private lastEpisodesBuiltAtMs = 0;
@@ -160,6 +169,13 @@ export class AmbientCatalogDaemon {
         lastScreenLines = ocr.lineCount;
         if (ocr.text.trim().length > 0) {
           this.lastScreenText = ocr.text.trim();
+          this.screenDispatcher.ingestNotification({
+            kind: "AXFocusedWindowChanged",
+            timestampMs: Date.now(),
+            app: ocr.frontmostApp ?? "unknown",
+            windowTitle: ocr.windowTitle ?? "",
+            textContent: this.lastScreenText,
+          });
         }
       } catch (err) {
         errors.push(`screen: ${String(err)}`);
@@ -222,12 +238,23 @@ export class AmbientCatalogDaemon {
       store.close();
     }
 
+    const recommendedIntervalMs = computeAdaptiveCadenceMs(
+      this.opts.intervalMs ?? 5000,
+      { minMs: 2000, maxMs: 30_000 },
+      {
+        stateChanged: lastKeyCount > 0 || lastScreenLines > 0,
+        urgent: lastKeyCount >= 10,
+        replied: false,
+      },
+    );
+
     const status: DaemonStatus = {
       pid: process.pid,
       startedAt: this.startedAt,
       lastTickAt: new Date().toISOString(),
       ticks: this.ticks,
       insertedEventsTotal: this.insertedEventsTotal,
+      recommendedIntervalMs,
       lastScreenApp,
       lastScreenTitle,
       lastScreenLines,

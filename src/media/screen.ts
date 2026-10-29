@@ -3,6 +3,7 @@ import { appendFileSync, chmodSync, existsSync, mkdirSync, rmSync } from "node:f
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { findExecutable, runSensoryCommand } from "./native_helper.js";
+import { jaccardTokenSimilarity } from "../triggers/tgl_proactmem_eval.js";
 
 export interface ScreenOcrResult {
   text: string;
@@ -27,15 +28,10 @@ export function areScreensNearIdentical(prevText: string | undefined, nextText: 
   const a = prevText.trim();
   const b = nextText.trim();
   if (a === b) return true;
-  const tokA = new Set((a.toLowerCase().match(/[a-z][a-z0-9_-]{2,}/g) ?? []));
-  const tokB = new Set((b.toLowerCase().match(/[a-z][a-z0-9_-]{2,}/g) ?? []));
+  const tokA = new Set(a.toLowerCase().match(/[a-z][a-z0-9_-]{2,}/g) ?? []);
+  const tokB = new Set(b.toLowerCase().match(/[a-z][a-z0-9_-]{2,}/g) ?? []);
   if (tokA.size < 10 || tokB.size < 10) return false;
-  let inter = 0;
-  for (const t of tokA) {
-    if (tokB.has(t)) inter++;
-  }
-  const union = tokA.size + tokB.size - inter;
-  return union > 0 && inter / union >= 0.92;
+  return jaccardTokenSimilarity(a, b) >= 0.92;
 }
 
 export function ocrImage(imagePath: string, binDir?: string): ScreenOcrResult {

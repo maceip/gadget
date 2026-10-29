@@ -161,32 +161,96 @@ function firstPositional(args: string[], valueOpts: Set<string>): string | undef
   return undefined;
 }
 
+// ASK_AGENT: an owner turn in a coding-agent session that asks a question. The question
+// can come anywhere, often after a pasted log or diff, so the whole turn is read. It is
+// first reduced to prose (see proseLines): fenced code is dropped, and inline code and
+// URLs are held out as opaque placeholders so their "?" never counts. A sentence is a
+// question if it ends in "?" right after a word or a placeholder (not "x ? y" or "a?.b"),
+// or if it is the turn's first or last sentence and starts with a question word. A
+// sentence with a request clause ("can you fix X?", "Given that, could you ...") is not
+// seeking, nor is "Do not ..."/"Don't ...", nor is a turn that opens with a tool's reply
+// tag. Everything else (whether a question is worth surfacing on) is learned from
+// episodes and labels by the Anticipator, not hand-filtered here (AGENTS.md 6.1).
+// Returns the question sentences, with code and URLs restored (the search query), or null.
 const SYSTEM_REPLY_TAG = /^<(send_user_message_question_reply|external_codex_apps_|environment_context|permissions|collaboration_mode|turn_aborted)\b/i;
+const REQUEST = /^(?:can|could|would|will) you\b|^please\s+\S|^do\s+not\b|^don['’]?t\b/i;
+// Opening formatting (**, _, quotes, brackets) and discourse openers ("Also, can you
+// ...", "Then could you ...") come off before the request and question-word tests.
+const OPENER = /^(?:[*_"'`(\[]+|(?:also|and|then|so|ok|okay|now|but|hey|btw|next|finally|lastly)\b[,:]?\s*)+/i;
+const QUESTION_START = /^(what|how|why|where|when|which|who|whose|is|are|does|do(?!\s+not\b|n['’]?t\b)|did|should|has|have)\b/i;
+// Placeholders for inline code and URLs: private-use characters around an index.
+const HOLD_OPEN = "\uE000";
+const HOLD_CLOSE = "\uE001";
+// A closing ) or ] may come right before the "?" ("Should we call parse()?"), and closing
+// formatting after it: **Why does this fail?** or "Why?".
+const QUESTION_END = /[\p{L}\p{N}"')\]\uE001]\?+[*_"'`)\]]*$/u;
+const CONTAINER = /^(?:(?:[-*+]|\d+[.)])\s+|>\s*)+/;
+const FENCE = /^(`{3,}|~{3,})/;
+const INLINE_CODE = /(`+)[^`]*?\1/g;
+const URL_SPAN = /\b[a-z][a-z0-9+.-]*:\/\/\S+/gi;
 
-const INTERROGATIVE_START =
-  /^(what|how|why|where|when|which|who|whose|is|are|does|do(?!\s+not\b|n['’]?t\b)|did|should|has|have)\b/i;
+// The turn's prose lines: list and quote markers removed, fenced blocks dropped (a fence
+// closes only on the same character, at least as long, as in CommonMark; it may sit
+// inside a list item or quote), and inline code and URLs replaced by placeholders whose
+// original text is kept in `held`.
+function proseLines(text: string, held: string[]): string[] {
+  const lines: string[] = [];
+  let fence: string | null = null;
+  // An indented code block (4+ spaces or a tab) starts after a blank line and runs
+  // while lines stay indented or blank.
+  let afterBlank = true;
+  let indentedCode = false;
+  for (const raw of text.split("\n")) {
+    // Block quote markers ("> ", each taking one optional space) come off first, so an
+    // indented block inside a quote is still code.
+    const body = raw.replace(/^ {0,3}(?:> ?)+/, "");
+    const indented = /^(?: {4}|\t)/.test(body) && body.trim() !== "";
+    if (fence === null && indented && (afterBlank || indentedCode)) {
+      indentedCode = true;
+      continue;
+    }
+    indentedCode = indentedCode && body.trim() === "";
+    afterBlank = body.trim() === "";
+    const line = body.trim().replace(CONTAINER, "");
+    // A backtick fence's info string cannot contain a backtick (CommonMark), so
+    // "```--jitless``` why ...?" is inline code, not a fence.
+    const found = FENCE.exec(line)?.[1];
+    const marker = found && !(found[0] === "`" && line.slice(found.length).includes("`")) ? found : undefined;
+    if (fence !== null) {
+      if (marker && marker[0] === fence[0] && marker.length >= fence.length && line.slice(marker.length).trim() === "") fence = null;
+      continue;
+    }
+    if (marker) {
+      fence = marker;
+      continue;
+    }
+    if (!line) continue;
+    const hold = (m: string) => `${HOLD_OPEN}${held.push(m) - 1}${HOLD_CLOSE}`;
+    lines.push(line.replace(INLINE_CODE, hold).replace(URL_SPAN, hold));
+  }
+  return lines;
+}
 
-const POLITE_REQUEST_OR_IMPERATIVE =
-  /^(can|could|would|will) you\b|^please\b|^do\s+not\b|^don['’]?t\b/i;
+function isRequest(sentence: string): boolean {
+  return sentence.split(/[,;:]\s+/).some((clause) => REQUEST.test(clause.replace(OPENER, "")));
+}
 
-// ASK_AGENT: an owner turn in a coding-agent session that asks a question (AGENTS.md 6.1).
-// Requests phrased as questions ("can you fix X?"), negative imperatives ("Do not..."),
-// and system reply tags are not seeking. Everything else (whether a question is worth
-// surfacing on) is learned from episodes and labels by Anticipator, never hand-filtered here.
+export function askedQuestion(text: string): string | null {
+  if (SYSTEM_REPLY_TAG.test(text.trim())) return null;
+  const held: string[] = [];
+  const sentences = proseLines(text, held).flatMap((l) => l.split(/(?<=[.!?][*_"'`)\]]*)\s+/).filter(Boolean));
+  const found = sentences.filter((s, i) => {
+    if (isRequest(s)) return false;
+    const edge = i === 0 || i === sentences.length - 1;
+    return QUESTION_END.test(s) || (edge && QUESTION_START.test(s.replace(OPENER, "")));
+  });
+  if (found.length === 0) return null;
+  const restore = (s: string) => s.replace(/\uE000(\d+)\uE001/g, (_, i: string) => held[Number(i)] ?? "");
+  return found.map(restore).join(" ").slice(0, 500);
+}
+
 export function isQuestion(text: string): boolean {
-  const head = text.trim().slice(0, 500);
-  if (!head) return false;
-  if (SYSTEM_REPLY_TAG.test(head)) return false;
-  if (POLITE_REQUEST_OR_IMPERATIVE.test(head)) return false;
-
-  const sentences = head
-    .split(/(?<=[.!?])\s+/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const nonRequestSentences = sentences.filter((s) => !POLITE_REQUEST_OR_IMPERATIVE.test(s));
-  if (nonRequestSentences.length === 0) return false;
-
-  return nonRequestSentences.some((s) => /\?/.test(s) || INTERROGATIVE_START.test(s));
+  return askedQuestion(text) !== null;
 }
 
 const DOCS_HOSTS = /(^|\.)(docs\.rs|pkg\.go\.dev|devdocs\.io|developer\.mozilla\.org|developer\.apple\.com|learn\.microsoft\.com)$|^docs\.[^.]+\.[^.]+$|\.readthedocs\.(io|org)$/i;
@@ -240,8 +304,9 @@ export function classifyEventAll(e: EpisodicEvent): Seek[] {
     const q = docsSiteQuery(e.sourceUri, e.contentText);
     return q ? [{ kind: "HELP_LOOKUP", query: q }] : [];
   }
-  if ((e.source === "codex_session" || e.source === "antigravity_session") && meta.role === "user" && isQuestion(e.contentText)) {
-    return [{ kind: "ASK_AGENT", query: e.contentText.trim().slice(0, 500) }];
+  if ((e.source === "codex_session" || e.source === "antigravity_session") && meta.role === "user") {
+    const question = askedQuestion(e.contentText);
+    return question ? [{ kind: "ASK_AGENT", query: question }] : [];
   }
   return [];
 }

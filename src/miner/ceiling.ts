@@ -1,7 +1,7 @@
 // Ceiling metrics (AGENTS.md section 10, Phase 0 step 5). Both are proxies for
 // "the answer already existed in the owner's data"; the owner's labels are the truth.
 
-import type { EventStore, Hit } from "./store.js";
+import type { EventStore, StoreSnippetHit } from "./store.js";
 import type { SeekKind, SeekingEpisode } from "./types.js";
 
 export const DAY_MS = 24 * 60 * 60 * 1000;
@@ -49,8 +49,8 @@ export interface ActionHits {
   kind: SeekKind;
   query: string;
   keyTokens: string[];
-  hit: Hit | null; // best non-seek match strictly before seekStartMs
-  hitOlderThanDay: Hit | null; // best match older than one day before seekStartMs
+  hit: StoreSnippetHit | null; // best non-seek match strictly before seekStartMs
+  hitOlderThanDay: StoreSnippetHit | null; // best match older than one day before seekStartMs
 }
 
 export interface EpisodeEval {
@@ -59,8 +59,8 @@ export interface EpisodeEval {
   repeatSeek: boolean;
   keyTokens: string[];
   actions: ActionHits[]; // one per seek action that has key tokens
-  hit: Hit | null; // first action's hit, if any action hit
-  hitOlderThanDay: Hit | null;
+  hit: StoreSnippetHit | null; // first action's hit, if any action hit
+  hitOlderThanDay: StoreSnippetHit | null;
 }
 
 export interface Rate {

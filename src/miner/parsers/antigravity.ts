@@ -1,7 +1,7 @@
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { makeEvent } from "../event.js";
-import { bump, emptyCounts, type EpisodicEvent, type ParseResult } from "../types.js";
+import { bump, emptyCounts, isObject, safeLabel, type EpisodicEvent, type ParseResult } from "../types.js";
 
 // Finds canonical Antigravity conversation transcripts under ~/.gemini/antigravity/brain.
 // Each conversation directory <brainDir>/<convId>/.system_generated/logs/ holds
@@ -229,12 +229,4 @@ function unquoteArg(v: unknown): string | undefined {
     }
   }
   return trimmed;
-}
-
-function safeLabel(s: string): string {
-  return /^[a-z0-9_./-]{1,60}$/i.test(s) ? s : "<unprintable>";
-}
-
-function isObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
 }

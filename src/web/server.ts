@@ -24,7 +24,7 @@ import { parseMeta } from "../miner/seek.js";
 import { EventStore } from "../miner/store.js";
 import { renderWorkbenchHtml } from "./ui.js";
 
-export interface EpisodeLabel {
+export interface WorkbenchEpisodeLabel {
   realSeeking: "" | "Y" | "N";
   answerInMyData: "" | "Y" | "N";
   note: string;
@@ -66,7 +66,7 @@ export interface WorkbenchEpisodeView {
   resolutionSummary: string;
   topHit: WorkbenchHitView | null;
   topHitOlderThanDay: WorkbenchHitView | null;
-  label: EpisodeLabel;
+  label: WorkbenchEpisodeLabel;
 }
 
 export interface WorkbenchMetrics {
@@ -223,7 +223,7 @@ export function buildWorkbenchState(cfg: MinerConfig, reportDirOverride?: string
   const labelsPath = join(reportDir, "labels.csv");
   const reportPath = join(reportDir, "report.md");
   const csvRows = readLabelsCsv(labelsPath);
-  const labelByEpisodeId = new Map<string, EpisodeLabel>();
+  const labelByEpisodeId = new Map<string, WorkbenchEpisodeLabel>();
   for (const r of csvRows) {
     labelByEpisodeId.set(r.episode_id, {
       realSeeking: r.real_seeking,
@@ -337,7 +337,7 @@ export function buildWorkbenchState(cfg: MinerConfig, reportDirOverride?: string
 }
 
 function computeMetrics(
-  labels: EpisodeLabel[],
+  labels: WorkbenchEpisodeLabel[],
   ceilingLocalHit: string,
   ceilingOlderThanDay: string,
   repeatSeek: string,
@@ -373,9 +373,9 @@ function computeMetrics(
 export function updateEpisodeLabelOnDisk(
   cfg: MinerConfig,
   episodeId: string,
-  patch: Partial<EpisodeLabel>,
+  patch: Partial<WorkbenchEpisodeLabel>,
   reportDirOverride?: string,
-): { ok: boolean; label: EpisodeLabel; metrics: WorkbenchMetrics } {
+): { ok: boolean; label: WorkbenchEpisodeLabel; metrics: WorkbenchMetrics } {
   const reportDir = reportDirOverride ?? ensureLatestReportDir(cfg);
   const labelsPath = join(reportDir, "labels.csv");
   const rows = readLabelsCsv(labelsPath);
@@ -477,14 +477,42 @@ function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
 }
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
-  res.writeHead(status, {
-    "Content-Type": "application/json; charset=utf-8",
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
-    "Access-Control-Allow-Private-Network": "true",
-  });
+  // No CORS headers: the workbench page is same-origin and the extension's service worker
+  // has host_permissions, so neither needs them. Any other web page must not read these.
+  res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
   res.end(JSON.stringify(body));
+}
+
+// The only paths the capture extension calls.
+const EXTENSION_PATHS = new Set(["/api/capture/chrome", "/api/shadow/browser", "/api/status"]);
+
+// Every response holds the owner's private data and every POST changes it, so only these
+// callers are served:
+// - Host must name this server on loopback. A web page that points its own domain at
+//   127.0.0.1 (DNS rebinding) sends its own name here and is refused.
+// - Origin, when present, must be this server's own origin, or the capture extension for
+//   the paths it uses. Browsers send Origin on every cross-origin read and on every POST,
+//   so another site's page cannot read state or write labels or capture events.
+// - Sec-Fetch-Site, when present, must be same-origin or none (typed URL), which also
+//   refuses cross-site requests that carry no Origin (an <img> or <script> GET).
+// Clients with no Origin and no Sec-Fetch-Site are local programs, not web pages.
+export function requestAllowed(
+  headers: IncomingMessage["headers"],
+  port: number,
+  pathname: string,
+): boolean {
+  const host = headers.host ?? "";
+  const names = ["127.0.0.1", "localhost", "[::1]"];
+  // On port 80, clients send Host (and Origin) without the port.
+  const hosts = names.map((n) => `${n}:${port}`).concat(port === 80 ? names : []);
+  if (!hosts.includes(host)) return false;
+  const origin = headers.origin;
+  if (origin !== undefined) {
+    if (origin.startsWith("chrome-extension://")) return EXTENSION_PATHS.has(pathname);
+    if (origin !== `http://${host}`) return false;
+  }
+  const site = headers["sec-fetch-site"];
+  return site === undefined || site === "same-origin" || site === "none";
 }
 
 export function startWorkbenchServer(
@@ -497,13 +525,19 @@ export function startWorkbenchServer(
 
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     try {
+      const urlObj = new URL(req.url ?? "/", `http://${host}`);
+      const pathname = urlObj.pathname;
+      const addr = server.address();
+      const listeningPort = typeof addr === "object" && addr ? addr.port : requestedPort;
+      if (!requestAllowed(req.headers, listeningPort, pathname)) {
+        sendJson(res, 403, { ok: false, error: "forbidden: not this workbench's own page or capture extension" });
+        return;
+      }
+
       if (req.method === "OPTIONS") {
         sendJson(res, 204, {});
         return;
       }
-
-      const urlObj = new URL(req.url ?? "/", `http://${host}`);
-      const pathname = urlObj.pathname;
 
       if (req.method === "GET" && pathname === "/") {
         const html = renderWorkbenchHtml();

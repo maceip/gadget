@@ -23,7 +23,7 @@ import { formatReplayTable, runReplay } from "../runtime/replay.js";
 import { FtsEventsSearcher } from "../runtime/searchers.js";
 import { startWorkbenchServer } from "../web/server.js";
 import { evaluateCeiling } from "./ceiling.js";
-import { loadConfig } from "./config.js";
+import { flag, loadConfig } from "./config.js";
 import { buildEpisodes } from "./episodes.js";
 import { formatIngestTable, ingest } from "./ingest.js";
 import { probe } from "./probe.js";
@@ -37,11 +37,6 @@ function checkNode(): void {
     console.error(`gadget miner needs Node 22.13 or newer (node:sqlite); this is ${process.versions.node}`);
     process.exit(2);
   }
-}
-
-function flag(args: string[], name: string): string | undefined {
-  const i = args.indexOf(name);
-  return i >= 0 ? args[i + 1] : undefined;
 }
 
 async function main(argv: string[]): Promise<number> {

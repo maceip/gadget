@@ -15,7 +15,7 @@ export interface StoredEvent {
   seeks: Seek[];
 }
 
-export interface Hit {
+export interface StoreSnippetHit {
   eventId: string;
   source: Source;
   timestampMs: number;
@@ -171,7 +171,7 @@ export class EventStore {
 
   // Best FTS match among non-seek events strictly older than beforeMs.
   // The strict cutoff is what keeps replay honest: nothing from the future can match.
-  searchBefore(match: string, beforeMs: number, limit = 1): Hit[] {
+  searchBefore(match: string, beforeMs: number, limit = 1): StoreSnippetHit[] {
     const rows = this.db
       .prepare(
         `SELECT e.event_id AS event_id, e.source AS source, e.timestamp_ms AS timestamp_ms,
