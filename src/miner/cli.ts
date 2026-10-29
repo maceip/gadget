@@ -7,15 +7,19 @@
 //   npm run mine -- mcp                         run Phase 2 read-only MCP stdio server exposing recall(query)
 // Offline and read-only on every source. Config overrides: ~/.gadget/config.json.
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { listAudioDevices, recordAudioClip } from "../media/audio_recorder.js";
 import { captureClipboardOnce } from "../media/clipboard.js";
+import { captureFocusedTextOnce, watchKeysBurst } from "../media/keyboard.js";
 import { captureScreenAndOcr } from "../media/screen.js";
 import { transcribeAudio } from "../media/stt.js";
 import { listVoices, speakAloud, synthesizeSpeech } from "../media/tts.js";
 import { runStdioMcpServer } from "../mcp/server.js";
+import { CalibratedAnticipator } from "../runtime/anticipator.js";
+import { AmbientCatalogDaemon, loadLatestLabelsMap } from "../runtime/daemon.js";
 import { formatReplayTable, runReplay } from "../runtime/replay.js";
+import { FtsEventsSearcher } from "../runtime/searchers.js";
 import { startWorkbenchServer } from "../web/server.js";
 import { evaluateCeiling } from "./ceiling.js";
 import { loadConfig } from "./config.js";
@@ -102,7 +106,12 @@ async function main(argv: string[]): Promise<number> {
     try {
       const events = store.allEventsSorted();
       const episodes = buildEpisodes(events, cfg);
-      const summary = await runReplay(episodes, store);
+      const episodeLabels = loadLatestLabelsMap(cfg.reportsDir);
+      const anticipator = new CalibratedAnticipator(store, {
+        priorEpisodes: episodes,
+        episodeLabels,
+      });
+      const summary = await runReplay(episodes, store, { anticipator });
       console.log(formatReplayTable(summary));
     } finally {
       store.close();
@@ -216,8 +225,117 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
 
+  if (cmd === "capture-keys") {
+    const captureJsonlPath = join(dirname(cfg.zshHook), "keyboard.jsonl");
+    const durationSec = Number(flag(args, "--duration") ?? "1");
+    const focus = captureFocusedTextOnce({ captureJsonlPath });
+    const keys = watchKeysBurst({ durationSec, captureJsonlPath });
+    console.log(JSON.stringify({ focus, keys }));
+    return 0;
+  }
+
+  if (cmd === "daemon") {
+    const intervalMs = Number(flag(args, "--interval-ms") ?? "5000");
+    const enableAudio = args.includes("--audio");
+    const audioClipSec = Number(flag(args, "--audio-sec") ?? "3");
+    const keyWatchSec = Number(flag(args, "--key-sec") ?? "0.5");
+    const once = args.includes("--once");
+    const daemon = new AmbientCatalogDaemon(cfg, {
+      intervalMs,
+      enableAudio,
+      audioClipSec,
+      keyWatchSec,
+      once,
+    });
+    const first = daemon.runTick();
+    await daemon.runProactiveBriefUpdate();
+    console.log(JSON.stringify(first));
+    if (once) return 0;
+
+    setInterval(async () => {
+      try {
+        const st = daemon.runTick();
+        await daemon.runProactiveBriefUpdate();
+        console.log(JSON.stringify(st));
+      } catch (err) {
+        console.error(`daemon tick error: ${String(err)}`);
+      }
+    }, Math.max(1000, intervalMs));
+    await new Promise(() => {});
+    return 0;
+  }
+
+  if (cmd === "status") {
+    const statusPath = join(dirname(cfg.dbPath), "daemon-status.json");
+    const daemonStatus = existsSync(statusPath) ? JSON.parse(readFileSync(statusPath, "utf8")) : null;
+    let totalEvents = 0;
+    const bySource: Record<string, number> = {};
+    const recent: Array<{ source: string; ts: string; preview: string }> = [];
+    if (existsSync(cfg.dbPath)) {
+      const store = new EventStore(cfg.dbPath, { readOnly: true });
+      try {
+        const rows = store.db
+          .prepare("SELECT source, COUNT(*) AS n FROM events GROUP BY source ORDER BY n DESC")
+          .all() as Array<{ source: string; n: number }>;
+        for (const r of rows) {
+          bySource[r.source] = Number(r.n);
+          totalEvents += Number(r.n);
+        }
+        const latestRows = store.db
+          .prepare("SELECT source, timestamp_ms, substr(content_text, 1, 140) AS preview FROM events ORDER BY timestamp_ms DESC LIMIT 10")
+          .all() as Array<{ source: string; timestamp_ms: number; preview: string }>;
+        for (const r of latestRows) {
+          recent.push({
+            source: r.source,
+            ts: new Date(r.timestamp_ms).toISOString(),
+            preview: r.preview.replace(/\s+/g, " ").trim(),
+          });
+        }
+      } finally {
+        store.close();
+      }
+    }
+    const labelsMap = loadLatestLabelsMap(cfg.reportsDir);
+    console.log(
+      JSON.stringify(
+        {
+          dbPath: cfg.dbPath,
+          totalEvents,
+          bySource,
+          labeledEpisodesCount: labelsMap.size,
+          daemon: daemonStatus,
+          recentEvents: recent,
+        },
+        null,
+        2,
+      ),
+    );
+    return 0;
+  }
+
+  if (cmd === "search") {
+    const query = args.join(" ").trim();
+    if (!query) {
+      console.error("usage: npm run mine -- search <query>");
+      return 2;
+    }
+    if (!existsSync(cfg.dbPath)) {
+      console.error(`no store at ${cfg.dbPath}; run: npm run mine -- ingest`);
+      return 1;
+    }
+    const store = new EventStore(cfg.dbPath, { readOnly: true });
+    try {
+      const searcher = new FtsEventsSearcher(store);
+      const hits = await searcher.search(query, Date.now() + 1000);
+      console.log(JSON.stringify(hits, null, 2));
+    } finally {
+      store.close();
+    }
+    return 0;
+  }
+
   console.error(
-    "usage: npm run mine -- ingest | report [--seed N] [--out DIR] | probe | replay | mcp | web [--port N] | tts | stt | record-audio | capture-screen | capture-clipboard",
+    "usage: npm run mine -- ingest | report [--seed N] [--out DIR] | probe | replay | mcp | web [--port N] | daemon [--once] [--audio] | status | search <query> | tts | stt | record-audio | capture-screen | capture-clipboard | capture-keys",
   );
   return 2;
 }

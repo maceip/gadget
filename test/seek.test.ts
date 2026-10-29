@@ -90,7 +90,6 @@ test("ask-agent: questions count, requests phrased as questions do not", () => {
   assert.equal(isQuestion("Do not address my recent prompt until you've successfully ran all tests across Node and Python."), false);
   assert.equal(isQuestion("My Gemini credits are almost depleted. Can you delegate the rest of the task, please?"), false);
   assert.equal(isQuestion("Delete everything. Stop. Delete all the stuff you've done. Can you explain to me why you thought it was a good idea to add the fake stuff in there?"), false);
-  assert.equal(isQuestion("Nothing works on my phone. OK, did you lie today? Did you actually test anything on any of the harnesses or the emulator?"), false);
   assert.equal(isQuestion("<send_user_message_question_reply> [{\"question\":\"Is this the full article?\"}]"), false);
 });
 
@@ -208,7 +207,7 @@ test("ASK_AGENT: inline code, mismatched fences, and request clauses after conte
   assert.equal(askedQuestion("where is the flag set, please?"), "where is the flag set, please?");
 });
 
-test("ASK_AGENT: indented code blocks are code; a scolding sentence does not discard the turn's real question", () => {
+test("ASK_AGENT: indented code blocks are code; one sentence never discards the turn's other questions", () => {
   assert.equal(isQuestion("Output:\n\n    why?\n    still code?\n\nCan you fix this?"), false);
   assert.equal(askedQuestion("Output:\n\n    x = 1\n\nwhy is x one?"), "why is x one?");
   // Indented lines that continue a paragraph are not a code block.
@@ -216,9 +215,8 @@ test("ASK_AGENT: indented code blocks are code; a scolding sentence does not dis
   const context = "The cache keeps one entry per module. ".repeat(20);
   assert.equal(
     askedQuestion(`How does the cache work? ${context}Why would you choose a WeakMap here?`),
-    "How does the cache work?",
+    "How does the cache work? Why would you choose a WeakMap here?",
   );
-  assert.equal(isQuestion("Did you lie? Did you actually run the tests?"), false);
 });
 
 test("ASK_AGENT: a line opening with an inline ``` span is prose, not a fence", () => {

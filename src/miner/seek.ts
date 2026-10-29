@@ -168,13 +168,11 @@ function firstPositional(args: string[], valueOpts: Set<string>): string | undef
 // question if it ends in "?" right after a word or a placeholder (not "x ? y" or "a?.b"),
 // or if it is the turn's first or last sentence and starts with a question word. A
 // sentence with a request clause ("can you fix X?", "Given that, could you ...") is not
-// seeking, nor is "Do not ..."/"Don't ...". A turn that opens with a tool's reply tag,
-// is not seeking at all; a sentence that scolds the agent ("did you lie", "why would
-// you") is dropped, and the turn's other sentences still count.
+// seeking, nor is "Do not ..."/"Don't ...", nor is a turn that opens with a tool's reply
+// tag. Everything else (whether a question is worth surfacing on) is learned from
+// episodes and labels by the Anticipator, not hand-filtered here (AGENTS.md 6.1).
 // Returns the question sentences, with code and URLs restored (the search query), or null.
 const SYSTEM_REPLY_TAG = /^<(send_user_message_question_reply|external_codex_apps_|environment_context|permissions|collaboration_mode|turn_aborted)\b/i;
-const RHETORICAL_SCOLDING =
-  /\b(did you lie|you['’]?re lying|you lied|how could you|what the hell|why would you|so you['’]?re telling me|i want a refund|burn it all down|delete everything|did you (actually|really|even|set up|check|push|run|test)\b|why (did|do|don['’]?t|are) you\b|what are you (doing|waiting|running)\b|what task are you\b|who is your implementation agent\b|are you using .* subagents\b|how did you imagine\b|do you (want to know|care|prefer)\b)/i;
 const REQUEST = /^(?:can|could|would|will) you\b|^please\s+\S|^do\s+not\b|^don['’]?t\b/i;
 // Opening formatting (**, _, quotes, brackets) and discourse openers ("Also, can you
 // ...", "Then could you ...") come off before the request and question-word tests.
@@ -238,7 +236,7 @@ export function askedQuestion(text: string): string | null {
   const held: string[] = [];
   const sentences = proseLines(text, held).flatMap((l) => l.split(/(?<=[.!?][*_"'`)\]]*)\s+/).filter(Boolean));
   const found = sentences.filter((s, i) => {
-    if (isRequest(s) || RHETORICAL_SCOLDING.test(s)) return false;
+    if (isRequest(s)) return false;
     const edge = i === 0 || i === sentences.length - 1;
     return QUESTION_END.test(s) || (edge && QUESTION_START.test(s.replace(OPENER, "")));
   });

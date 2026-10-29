@@ -7,7 +7,10 @@ export type Source =
   | "codex_session"
   | "antigravity_session"
   | "git"
-  | "clipboard";
+  | "clipboard"
+  | "screen"
+  | "audio"
+  | "keyboard";
 
 export type SeekKind = "WEB_SEARCH" | "GREP" | "GIT_ARCHAEOLOGY" | "HELP_LOOKUP" | "ASK_AGENT";
 

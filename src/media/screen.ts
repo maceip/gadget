@@ -18,6 +18,7 @@ export interface CaptureScreenOptions {
   keepImage?: boolean;
   captureJsonlPath?: string;
   workspacePath?: string;
+  lastText?: string;
   binDir?: string;
 }
 
@@ -71,7 +72,8 @@ export function captureScreenAndOcr(options: CaptureScreenOptions = {}): ScreenO
 
   try {
     const ocr = ocrImage(imgPath, options.binDir);
-    if (options.captureJsonlPath && ocr.text.trim().length > 0) {
+    const trimmed = ocr.text.trim();
+    if (options.captureJsonlPath && trimmed.length > 0 && trimmed !== options.lastText) {
       mkdirSync(dirname(options.captureJsonlPath), { recursive: true, mode: 0o700 });
       const record = {
         ts: Date.now(),
