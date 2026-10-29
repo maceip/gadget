@@ -180,7 +180,9 @@ export function askedQuestion(text: string): string | null {
   let inFence = false;
   for (const raw of text.split("\n")) {
     const line = raw.trim();
-    if (line.startsWith("```") || line.startsWith("~~~")) {
+    // A fence can sit inside a block quote ("> ```").
+    const unquoted = line.replace(/^(?:>\s*)+/, "");
+    if (unquoted.startsWith("```") || unquoted.startsWith("~~~")) {
       inFence = !inFence;
       continue;
     }

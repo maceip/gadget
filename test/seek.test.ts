@@ -151,3 +151,8 @@ test("ASK_AGENT: tilde fences are code too; formatting around a question does no
     "**Why does the wasm build fail?**",
   );
 });
+
+test("ASK_AGENT: a fence inside a block quote is code too", () => {
+  assert.equal(isQuestion("> ```\n> why?\n> ```\ncan you fix this?"), false);
+  assert.equal(askedQuestion("> ```\n> x = a ? b : c\n> ```\n> why does this fail?"), "why does this fail?");
+});

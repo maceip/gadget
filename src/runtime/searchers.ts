@@ -308,7 +308,8 @@ function commitBefore(repo: string, asOfMs: number): string | null {
     const out = execFileSync(
       "git",
       ["--no-optional-locks", "-C", repo, "log", "-g", "--date=unix", "--format=%H\u001f%gD", "HEAD"],
-      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+      // An active repo's HEAD reflog can pass the 1 MiB default and fail with ENOBUFS.
+      { encoding: "utf8", maxBuffer: 1 << 30, stdio: ["ignore", "pipe", "ignore"] },
     );
     const before = parseReflog(out).filter((e) => e.atMs < asOfMs);
     return before.at(-1)?.sha ?? null;

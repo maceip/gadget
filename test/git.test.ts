@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { availabilityTimes, discoverRepos, parseGitLog, parseReflog, readGitRepo } from "../src/miner/parsers/git.js";
@@ -206,4 +206,25 @@ test("git: whole-second times are dated at the end of their second", () => {
   const [entry] = parseReflog(`${sha}\u001fHEAD@{100}`);
   assert.equal(entry!.atMs, 100_999);
   assert.ok(!(entry!.atMs < 100_500));
+});
+
+test("runtime repo grep still works when HEAD's reflog is larger than 1 MiB", async () => {
+  const repo = join(tmp(), "busy");
+  mkdirSync(repo);
+  at(repo, "2026-01-01T00:00:00Z", "init", "-q");
+  writeFileSync(join(repo, "build.ts"), "export const flags = ['--tier-up-flag'];\n");
+  at(repo, "2026-01-01T00:00:00Z", "add", ".");
+  at(repo, "2026-01-01T00:00:00Z", "-c", "user.email=o@example.com", "-c", "user.name=O", "commit", "-q", "-m", "init");
+  const sha = at(repo, "2026-01-01T00:00:00Z", "rev-parse", "HEAD");
+  // 20k checkouts of the same commit: about 1.3 MiB of `git log -g` output.
+  const start = Date.UTC(2026, 0, 2) / 1000;
+  const lines = Array.from({ length: 20_000 }, (_, i) => `${sha} ${sha} O <o@example.com> ${start + i} +0000\tcheckout: moving from main to main\n`);
+  appendFileSync(join(repo, ".git", "logs", "HEAD"), lines.join(""));
+  const store = new EventStore(join(tmp(), "s.db"));
+  try {
+    const hits = await new RepoGrepSearcher(store, repo).search("--tier-up-flag", Date.UTC(2026, 1, 1));
+    assert.equal(hits.length, 1);
+  } finally {
+    store.close();
+  }
 });
