@@ -30,7 +30,7 @@ const SEND_PATTERNS = [
 
 const NETWORK_SCOPES = ["src/miner/", "src/capture/", "capture/"];
 const NETWORK_PATTERNS = [
-  { name: "http/https/http2/net/dgram/tls/undici module", re: /["'](node:)?(http|https|http2|net|dgram|tls|undici)["']/ },
+  { name: "http/https/http2/net/dgram/tls/dns/undici module", re: /["'](node:)?(http|https|http2|net|dgram|tls|dns|undici)(\/promises)?["']/ },
   { name: "fetch(", re: /\bfetch\s*\(/ },
   { name: "WebSocket", re: /\bWebSocket\b/ },
   { name: "curl/wget", re: /\b(curl|wget)\b/ },

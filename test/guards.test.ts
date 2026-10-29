@@ -41,6 +41,13 @@ test("guard_no_send: send pattern anywhere and network call under src/miner both
   assert.match(r.stderr, new RegExp(`docs/notes\\.md:1: send pattern "${OSA}"`));
 });
 
+test("guard_no_send: DNS modules count as network APIs", () => {
+  const root = repoWith({ "src/miner/leak.ts": 'import { resolve } from "node:dns/promises";\n' });
+  const r = run("guard_no_send.mjs", root);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /src\/miner\/leak\.ts:1: network pattern .*dns/);
+});
+
 test("guard_no_send: the network rule covers top-level capture/ too", () => {
   const root = repoWith({ "capture/zsh/upload.zsh": "cu" + "rl -d @log https://example.com\n" });
   const r = run("guard_no_send.mjs", root);

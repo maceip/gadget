@@ -3,10 +3,12 @@ import type { EpisodicEvent } from "./types.js";
 
 export const MINER_VERSION = "0.1.0";
 
-// Content-addressed: the same source record always gets the same id.
+// Content-addressed: the same source record always gets the same id. Metadata is part
+// of the identity (e.g. Chrome's History path and visit id), so two distinct records with
+// the same URL, text, and millisecond are both kept.
 export function eventId(e: Omit<EpisodicEvent, "eventId">): string {
   return createHash("sha256")
-    .update([e.source, e.sourceUri, String(e.timestampMs), e.contentText].join("\u0000"))
+    .update([e.source, e.sourceUri, String(e.timestampMs), e.contentText, e.metadataJson].join("\u0000"))
     .digest("hex")
     .slice(0, 32);
 }

@@ -182,6 +182,49 @@ test("store: events with the same timestamp keep insertion order, not id order",
   store.close();
 });
 
+test("episodes: a long command that started before the context window but failed inside it counts", () => {
+  const eps = buildEpisodes(
+    [
+      ev("zsh_hook", T0 - 15 * MIN, "make build", { exit: 2, end_ms: T0 - 5 * MIN }),
+      ev("zsh_hook", T0, "rg tierUp", { exit: 0, end_ms: T0 }),
+      ev("zsh_hook", T0 + MIN, "make build", { exit: 0, end_ms: T0 + 2 * MIN }),
+    ].map(stored),
+    params,
+  );
+  assert.equal(eps[0]!.resolution?.kind, "COMMAND_SUCCEEDED");
+  assert.equal(eps[0]!.resolution?.atMs, T0 + 2 * MIN);
+});
+
+test("episodes: overlapping retries resolve at whichever finishes first", () => {
+  const eps = buildEpisodes(
+    [
+      ev("zsh_hook", T0 - 2 * MIN, "make build", { exit: 2, end_ms: T0 - 2 * MIN }),
+      ev("zsh_hook", T0 - MIN, "npm test", { exit: 1, end_ms: T0 - MIN }),
+      ev("zsh_hook", T0, "rg tierUp", { exit: 0, end_ms: T0 }),
+      ev("zsh_hook", T0 + MIN, "make build", { exit: 0, end_ms: T0 + 10 * MIN }),
+      ev("zsh_hook", T0 + 2 * MIN, "npm test", { exit: 0, end_ms: T0 + 3 * MIN }),
+    ].map(stored),
+    params,
+  );
+  assert.equal(eps[0]!.resolution?.kind, "TEST_PASSED");
+  assert.equal(eps[0]!.resolution?.atMs, T0 + 3 * MIN);
+});
+
+test("episodes: a command in the same second just before the seek is still context", () => {
+  const events = [ev("zsh", T0, "vim build.ts"), ev("zsh", T0, "rg tierUp")].map(stored);
+  const eps = buildEpisodes(events, params);
+  assert.deepEqual(eps[0]!.contextEventIds, [events[0]!.eventId]);
+});
+
+test("store: two records alike except for metadata (e.g. two Chrome profiles) are both kept", () => {
+  const a = ev("chrome", T0, "Lite mode\nhttps://v8.dev", { kind: "visit", history: "/p1/History", visit_id: 1 });
+  const b = ev("chrome", T0, "Lite mode\nhttps://v8.dev", { kind: "visit", history: "/p2/History", visit_id: 1 });
+  assert.notEqual(a.eventId, b.eventId);
+  const store = storeWith([a, b]);
+  assert.equal(store.allEventsSorted().length, 2);
+  store.close();
+});
+
 test("episodes: git commits are not evidence that the owner resumed work", () => {
   const eps = buildEpisodes([ev("zsh", T0, "rg tierUp"), ev("git", T0 + MIN, "Upstream: bump deps")].map(stored), params);
   assert.equal(eps[0]!.resolution, undefined);
