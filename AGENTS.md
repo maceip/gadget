@@ -1,6 +1,6 @@
 # gadget v1: plan and rules for agents
 
-Status as of 2026-10-28: **nothing is built.** Earlier notes in this repo describe systems that do not exist. They are untrusted and live in `archive/untrusted-llm-notes/`. Do not cite them as implemented.
+Status as of 2026-10-28: **nothing is built** beyond what has a passing CI run on `main`. The earlier LLM-written `PLAN.md` describes systems that do not exist; it is untrusted and lives in `archive/untrusted-llm-notes/`. Do not cite it as implemented. `ideation.md` is the owner's original note and stays at the root.
 
 ## 1. What we are building
 
@@ -50,7 +50,7 @@ The system and the agents building it may read all of the owner's data. **Nothin
 - The owner's phone is never adb-connected to a machine where agents run.
 - OAuth tokens, if any, use read-only scopes (e.g. `gmail.readonly`).
 - A browser extension, if built, reads the DOM only: no clicks, input events, or form submits.
-- CI guard `scripts/guard_no_send` fails the build if send-capable APIs appear anywhere in the codebase, for example:
+- CI guard `scripts/guard_no_send.mjs` fails the build if send-capable APIs appear anywhere in the codebase, and if network APIs appear under `src/miner/` or `src/capture/`. The pattern lists live in that script; examples:
   `osascript`, `application "Messages"`, `gmail.send`, `gmail.compose`, `gmail.modify`, `nodemailer`, `smtplib`, `.click()`, `dispatchEvent(`, `.submit()`, `chrome.debugger`, `addResultsToIntent`, `sendTextMessage`.
   The guard is a backstop; the separate user account and read-only tokens are the real fence.
 - **External queries are outbound.** A web search or external API query may contain only tokens that appear in public sources (e.g. an error string from a public library). Anything with private names, repo names, people, or internal flags is dropped or goes to the outbox for the owner.
@@ -64,7 +64,7 @@ Raw events, full-text search, mined episodes, outbox, verdicts. No graph.
 ```typescript
 interface EpisodicEvent {
   eventId: string;                  // content-addressed (hash of source + offset + content)
-  source: "zsh" | "chrome" | "codex_session" | "antigravity_session" | "git" | "clipboard";
+  source: "zsh" | "zsh_hook" | "chrome" | "codex_session" | "antigravity_session" | "git" | "clipboard";
   timestampMs: number;
   workspacePath?: string;
   contentText: string;              // indexed with SQLite FTS5
@@ -109,7 +109,7 @@ We define what "looking for something" and "found it" look like. We do not defin
 
 | Resolution | Detected from |
 |---|---|
-| `PASTE_FROM_SOURCE` | clipboard copy from a source, then paste into the workspace (forward capture only) |
+| `PASTE_FROM_SOURCE` | clipboard copy from a source, then paste into the workspace (needs clipboard capture, deferred; see section 11) |
 | `COMMAND_SUCCEEDED` | exit code 0 after failures (zsh hook going forward; tool results in Codex sessions for backfill) |
 | `TEST_PASSED` | test command exits 0 after failing |
 | `WORK_RESUMED` | fallback: seeking stops, normal work resumes (weakest; backfill only) |
@@ -229,16 +229,14 @@ Every verdict other than `GOOD`:
 ### Phase 0: reset and measure (do this first)
 
 1. Move old notes to `archive/untrusted-llm-notes/`. README line: "Nothing is built. Only items with a passing CI run count."
-2. CI: `scripts/guard_no_send`, the `acceptance/` hash-manifest check, and `CODEOWNERS` naming the owner for `acceptance/`, `scripts/guard_*`, and `CODEOWNERS`.
-3. Start forward capture now, so data accumulates:
-   - zsh `preexec`/`precmd` hook appending cwd, command, exit code, and start/end time to a JSONL file;
-   - clipboard logger (macOS pasteboard change-count polling) recording timestamp, frontmost app, and text.
-4. History miner. Read-only, offline, no network calls:
+2. CI: `scripts/guard_no_send.mjs`, the `acceptance/` hash-manifest check (`scripts/guard_acceptance_manifest.mjs`), and `.github/CODEOWNERS` naming the owner for `acceptance/`, `scripts/guard_*`, `.github/`, and `AGENTS.md`. CODEOWNERS only binds once the owner enables branch protection on `main` with required code-owner review.
+3. Start forward capture now, so data accumulates: a zsh `preexec`/`precmd` hook (`capture/zsh/gadget.zsh`) appending cwd, command, exit code, and start/end time to `~/.gadget/capture/zsh.jsonl`.
+4. History miner (`src/miner/`; TypeScript, Node 22.13+ for unflagged `node:sqlite` with FTS5, no runtime dependencies). Read-only, offline, no network calls:
    - zsh history: `EXTENDED_HISTORY` format `: <epoch>:<duration>;<cmd>`. Lines without timestamps are skipped and counted, never given guessed times.
    - Chrome `History` SQLite: copy the file first (locked while Chrome runs). Timestamps are microseconds since 1601-01-01 UTC. Tables: `urls`, `visits`, `keyword_search_terms`.
    - `~/.codex/sessions/**/*.jsonl`: formats vary by version. Unknown records are counted, not dropped silently.
    - `~/.gemini/antigravity/brain/*`: format unknown. Inspect real files and document the format before writing a parser.
-   - git: reflog and log across configured repo roots.
+   - git: log across configured repo roots (reflog not read yet).
 5. Ceiling report (`report.md`):
    - per-source event counts and parse-failure counts;
    - episode count;
@@ -278,7 +276,10 @@ Read-only phone capture APK; message threads as a searcher.
 - The ceiling is unknown until Phase 0.
 - Being stuck and giving up leaves no seeking trace. `MISSED` verdicts cover it for now.
 - zsh history has no exit codes, so backfilled resolutions are weak. The forward hook fixes this going forward.
-- The Antigravity transcript format is undocumented.
+- The Antigravity transcript format is undocumented. The miner only counts those files; `npm run mine -- probe` prints their structure (keys and types, no content) so a parser can be written against real files.
+- The Codex parser is written from the public rollout format and is unverified against the owner's files until `probe` output has been reviewed. Unknown record shapes are counted, not dropped.
+- Clipboard capture deferred: a pbpaste poller would log passwords copied from password managers. Needs a macOS-native helper that skips concealed pasteboard types. Not started.
+- Docs-site visits are not yet classified as `HELP_LOOKUP`; only shell `man`, `tldr`, and `--help` are.
 
 ## 12. Corrections to earlier notes
 
