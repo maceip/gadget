@@ -247,3 +247,25 @@ test("runtime freshness is UNKNOWN, not CURRENT, before the repo's oldest HEAD r
     store.close();
   }
 });
+
+test("git: a failed reflog command is reported as git_reflog_failed, not hidden as no_local_time skips", () => {
+  const repo = join(tmp(), "proj");
+  initRepo(repo, [{ msg: "init", date: "2026-01-02T03:04:05Z" }]);
+  // A git that fails only for `log -g`, as an unreadable reflog would.
+  const bin = tmp();
+  const realGit = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+  writeFileSync(
+    join(bin, "git"),
+    `#!/bin/sh\nfor a in "$@"; do [ "$a" = "-g" ] && { echo "fatal: reflog unreadable" >&2; exit 128; }; done\nexec "${realGit}" "$@"\n`,
+    { mode: 0o755 },
+  );
+  const savedPath = process.env.PATH;
+  process.env.PATH = `${bin}:${savedPath ?? ""}`;
+  try {
+    const r = readGitRepo(repo, 10);
+    assert.equal(r.counts.unknown.git_reflog_failed, 1);
+    assert.equal(r.counts.skipped.no_local_time, 1);
+  } finally {
+    process.env.PATH = savedPath;
+  }
+});

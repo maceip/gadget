@@ -158,13 +158,17 @@ export function readGitRepo(repo: string, maxCommits: number): ParseResult {
     bump(counts.unknown, "git_log_failed");
     return { events: [], counts };
   }
+  // A repo with no reflogs gives empty output, and every commit is skipped as
+  // no_local_time. A failed command is reported as such, not hidden in those skips.
   let reflog: ReflogEntry[] = [];
+  let reflogFailed = false;
   try {
     reflog = parseReflog(git(repo, ["log", "-g", "--all", "--date=unix", `--format=%H${FIELD}%gD`]));
   } catch {
-    // no reflogs at all: every commit is skipped as no_local_time
+    reflogFailed = true;
   }
   const result = parseGitLog(out, repo, reflog);
+  if (reflogFailed) bump(result.counts.unknown, "git_reflog_failed");
   if (result.counts.read >= maxCommits) bump(result.counts.skipped, "truncated_at_max_commits");
   return result;
 }

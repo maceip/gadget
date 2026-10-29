@@ -230,3 +230,8 @@ test("ASK_AGENT: an indented code block inside a block quote is code", () => {
   assert.equal(askedQuestion("> Output:\n>\n>     x = 1\n>\n> why is x one?"), "why is x one?");
   assert.equal(askedQuestion("> why does the wasm build fail?"), "why does the wasm build fail?");
 });
+
+test("ASK_AGENT: a question ending in a closing paren or bracket before the ?", () => {
+  assert.equal(askedQuestion("Build failed. Should we call parse()? Thanks."), "Should we call parse()?");
+  assert.equal(askedQuestion("Logs attached. Is it flags[0]? Thanks."), "Is it flags[0]?");
+});

@@ -181,8 +181,9 @@ const QUESTION_START = /^(what|how|why|where|when|which|who|whose|is|are|does|do
 // Placeholders for inline code and URLs: private-use characters around an index.
 const HOLD_OPEN = "\uE000";
 const HOLD_CLOSE = "\uE001";
-// Closing formatting after the "?" is allowed: **Why does this fail?** or "Why?".
-const QUESTION_END = /[\p{L}\p{N}"'\uE001]\?+[*_"'`)\]]*$/u;
+// A closing ) or ] may come right before the "?" ("Should we call parse()?"), and closing
+// formatting after it: **Why does this fail?** or "Why?".
+const QUESTION_END = /[\p{L}\p{N}"')\]\uE001]\?+[*_"'`)\]]*$/u;
 const CONTAINER = /^(?:(?:[-*+]|\d+[.)])\s+|>\s*)+/;
 const FENCE = /^(`{3,}|~{3,})/;
 const INLINE_CODE = /(`+)[^`]*?\1/g;
