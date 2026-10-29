@@ -60,6 +60,11 @@ test("requestAllowed: own page, typed URL, extension, and local clients pass; ot
   for (const [headers, path, want] of cases) {
     assert.equal(requestAllowed(headers, p, path), want, `${JSON.stringify(headers)} ${path}`);
   }
+  // On port 80, Host and Origin carry no port.
+  assert.equal(requestAllowed({ host: "127.0.0.1", origin: "http://127.0.0.1" }, 80, "/api/state"), true);
+  assert.equal(requestAllowed({ host: "localhost" }, 80, "/"), true);
+  assert.equal(requestAllowed({ host: "127.0.0.1" }, 4321, "/api/state"), false);
+  assert.equal(requestAllowed({ host: "evil.test" }, 80, "/api/state"), false);
 });
 
 test("workbench refuses other origins and rebinding hosts, sends no CORS headers, and changes nothing for them", async () => {

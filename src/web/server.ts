@@ -502,7 +502,10 @@ export function requestAllowed(
   pathname: string,
 ): boolean {
   const host = headers.host ?? "";
-  if (![`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`].includes(host)) return false;
+  const names = ["127.0.0.1", "localhost", "[::1]"];
+  // On port 80, clients send Host (and Origin) without the port.
+  const hosts = names.map((n) => `${n}:${port}`).concat(port === 80 ? names : []);
+  if (!hosts.includes(host)) return false;
   const origin = headers.origin;
   if (origin !== undefined) {
     if (origin.startsWith("chrome-extension://")) return EXTENSION_PATHS.has(pathname);
