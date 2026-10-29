@@ -163,3 +163,16 @@ test("ASK_AGENT: a fence under a list item is code; a URL ending in ? is not a q
   assert.equal(isQuestion("GET https://example.test/search?\nplease rerun it"), false);
   assert.equal(askedQuestion("is https://example.test/search? the right endpoint?"), "is https://example.test/search? the right endpoint?");
 });
+
+test("ASK_AGENT: inline code, mismatched fences, and request clauses after context", () => {
+  const log = "x".repeat(600);
+  assert.equal(isQuestion(`${log}\nObserved output: \`why?\``), false);
+  assert.equal(askedQuestion("why does `--jitless` break the wasm build?"), "why does `--jitless` break the wasm build?");
+  // A ~~~ line inside a ``` block is content, not a closing fence.
+  assert.equal(isQuestion("```\n~~~\nwhy?\n```\nplease rerun it"), false);
+  assert.equal(askedQuestion("````\n```\nnot closed yet?\n````\nwhere is the flag set?"), "where is the flag set?");
+  assert.equal(isQuestion(`${log}\nGiven that output, can you fix it?`), false);
+  assert.equal(isQuestion("If it fails again; could you rerun it?"), false);
+  assert.equal(askedQuestion("what would you recommend for the tier-up flag?"), "what would you recommend for the tier-up flag?");
+  assert.equal(askedQuestion("where is the flag set, please?"), "where is the flag set, please?");
+});

@@ -162,40 +162,69 @@ function firstPositional(args: string[], valueOpts: Set<string>): string | undef
 }
 
 // ASK_AGENT: an owner turn in a coding-agent session that asks a question. The question
-// can come anywhere, often after a pasted log or diff, so the whole turn is read, minus
-// fenced code. A sentence is a question if it ends in "?" right after a word (not
-// "x ? y", "a?.b", or "?q=" in a URL), or if it is the turn's first or last sentence and
-// starts with a question word. Requests phrased as questions ("can you fix X?") are not
-// seeking. Returns the question sentences (the search query), or null.
-const REQUEST = /^(can|could|would|will) you\b|^please\b/i;
+// can come anywhere, often after a pasted log or diff, so the whole turn is read. It is
+// first reduced to prose (see proseLines): fenced code is dropped, and inline code and
+// URLs are held out as opaque placeholders so their "?" never counts. A sentence is a
+// question if it ends in "?" right after a word or a placeholder (not "x ? y" or "a?.b"),
+// or if it is the turn's first or last sentence and starts with a question word. A
+// sentence with a request clause ("can you fix X?", "Given that, could you ...") is not
+// seeking. Returns the question sentences, with code and URLs restored (the search
+// query), or null.
+const REQUEST = /^(?:can|could|would|will) you\b|^please\s+\S/i;
 // Opening formatting (**, _, quotes, brackets) and discourse openers ("Also, can you
 // ...", "Then could you ...") come off before the request and question-word tests.
 const OPENER = /^(?:[*_"'`(\[]+|(?:also|and|then|so|ok|okay|now|but|hey|btw|next|finally|lastly)\b[,:]?\s*)+/i;
 const QUESTION_START = /^(what|how|why|where|when|which|who|whose|is|are|does|do(?! not\b)|did|should|has|have)\b/i;
+// Placeholders for inline code and URLs: private-use characters around an index.
+const HOLD_OPEN = "";
+const HOLD_CLOSE = "";
 // Closing formatting after the "?" is allowed: **Why does this fail?** or "Why?".
-const QUESTION_END = /[\p{L}\p{N}"'`]\?+[*_"'`)\]]*$/u;
+const QUESTION_END = /[\p{L}\p{N}"']\?+[*_"'`)\]]*$/u;
+const CONTAINER = /^(?:(?:[-*+]|\d+[.)])\s+|>\s*)+/;
+const FENCE = /^(`{3,}|~{3,})/;
+const INLINE_CODE = /(`+)[^`]*?\1/g;
+const URL_SPAN = /\b[a-z][a-z0-9+.-]*:\/\/\S+/gi;
 
-export function askedQuestion(text: string): string | null {
-  const sentences: string[] = [];
-  let inFence = false;
+// The turn's prose lines: list and quote markers removed, fenced blocks dropped (a fence
+// closes only on the same character, at least as long, as in CommonMark; it may sit
+// inside a list item or quote), and inline code and URLs replaced by placeholders whose
+// original text is kept in `held`.
+function proseLines(text: string, held: string[]): string[] {
+  const lines: string[] = [];
+  let fence: string | null = null;
   for (const raw of text.split("\n")) {
-    // List and quote markers ("- ", "1. ", "> ") are not part of the sentence, and a
-    // fence can sit inside either ("> ```", "- ```").
-    const text = raw.trim().replace(/^(?:(?:[-*+]|\d+[.)])\s+|>\s*)+/, "");
-    if (text.startsWith("```") || text.startsWith("~~~")) {
-      inFence = !inFence;
+    const line = raw.trim().replace(CONTAINER, "");
+    const marker = FENCE.exec(line)?.[1];
+    if (fence !== null) {
+      if (marker && marker[0] === fence[0] && marker.length >= fence.length && line.slice(marker.length).trim() === "") fence = null;
       continue;
     }
-    if (inFence || !text) continue;
-    sentences.push(...text.split(/(?<=[.!?][*_"'`)\]]*)\s+/).filter(Boolean));
+    if (marker) {
+      fence = marker;
+      continue;
+    }
+    if (!line) continue;
+    const hold = (m: string) => `${HOLD_OPEN}${held.push(m) - 1}${HOLD_CLOSE}`;
+    lines.push(line.replace(INLINE_CODE, hold).replace(URL_SPAN, hold));
   }
+  return lines;
+}
+
+function isRequest(sentence: string): boolean {
+  return sentence.split(/[,;:]\s+/).some((clause) => REQUEST.test(clause.replace(OPENER, "")));
+}
+
+export function askedQuestion(text: string): string | null {
+  const held: string[] = [];
+  const sentences = proseLines(text, held).flatMap((l) => l.split(/(?<=[.!?][*_"'`)\]]*)\s+/).filter(Boolean));
   const found = sentences.filter((s, i) => {
-    const core = s.replace(OPENER, "");
-    if (REQUEST.test(core)) return false;
-    // A URL can end in a bare "?" (".../search?"); it is not a question.
-    return QUESTION_END.test(s.replace(/\b[a-z][a-z0-9+.-]*:\/\/\S+/gi, "").trim()) || ((i === 0 || i === sentences.length - 1) && QUESTION_START.test(core));
+    if (isRequest(s)) return false;
+    const edge = i === 0 || i === sentences.length - 1;
+    return QUESTION_END.test(s) || (edge && QUESTION_START.test(s.replace(OPENER, "")));
   });
-  return found.length > 0 ? found.join(" ").slice(0, 500) : null;
+  if (found.length === 0) return null;
+  const restore = (s: string) => s.replace(/(\d+)/g, (_, i: string) => held[Number(i)] ?? "");
+  return found.map(restore).join(" ").slice(0, 500);
 }
 
 export function isQuestion(text: string): boolean {
