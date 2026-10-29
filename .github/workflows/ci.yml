@@ -1,0 +1,31 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Guard - no send-capable or network APIs
+        run: node scripts/guard_no_send.mjs
+      - name: Guard - acceptance manifest
+        run: node scripts/guard_acceptance_manifest.mjs
+      - name: Install zsh
+        run: sudo apt-get update -q && sudo apt-get install -y -q zsh
+      - run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Unit and end-to-end tests
+        run: npm test
+      - name: zsh capture hook tests
+        run: npm run test:zsh

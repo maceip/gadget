@@ -1,0 +1,178 @@
+// `mine probe`: prints the STRUCTURE of the owner's Codex and Antigravity files
+// (record types, key names, counts) so parsers can be written against real data.
+// It never prints content: values are shown only when they look like enum labels.
+
+import { readFileSync, statSync } from "node:fs";
+import { extname } from "node:path";
+import type { MinerConfig } from "./config.js";
+import { censusFiles, listFiles } from "./parsers/files.js";
+
+const SAFE_KEY = /^[A-Za-z_][A-Za-z0-9_.-]{0,39}$/;
+const SAFE_VALUE = /^[a-z][a-z0-9_.-]{0,39}$/i;
+const MAX_FILE_BYTES = 50 * 1024 * 1024;
+const NO_TAG = "(no leading tag)";
+
+// A leading tag name is printed only if it appears in at least this many files (and in at
+// least 10% of the files that have user messages). Tool-injected context appears in most
+// sessions; a tag the owner typed once does not, and is counted without its name.
+export const TAG_MIN_FILES = 3;
+
+export function keyList(o: Record<string, unknown>): string {
+  return Object.keys(o)
+    .map((k) => (SAFE_KEY.test(k) ? k : "<key>"))
+    .sort()
+    .join(",");
+}
+
+function label(v: unknown): string {
+  return typeof v === "string" && SAFE_VALUE.test(v) ? v : typeof v;
+}
+
+function isObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+// One line of JSON -> a structural signature with no content in it.
+// Arrays: the distinct shapes of up to ARRAY_SAMPLE elements (no values).
+const ARRAY_SAMPLE = 20;
+
+export function signature(o: unknown): string {
+  if (Array.isArray(o)) {
+    const shapes = [...new Set(o.slice(0, ARRAY_SAMPLE).map((x) => signature(x)))].sort();
+    return `array[${o.length}] of {${shapes.slice(0, 5).join(" | ")}${shapes.length > 5 ? " | ..." : ""}}`;
+  }
+  if (!isObject(o)) return typeof o;
+  const parts = [`type=${label(o.type)}`, `keys={${keyList(o)}}`];
+  if (isObject(o.payload)) {
+    const p = o.payload;
+    parts.push(`payload.type=${label(p.type)}`);
+    if ("role" in p) parts.push(`payload.role=${label(p.role)}`);
+    if (Array.isArray(p.content)) {
+      const types = [...new Set(p.content.map((c) => (isObject(c) ? label(c.type) : typeof c)))].sort();
+      parts.push(`payload.content[].type={${types.join(",")}}`);
+    }
+    parts.push(`payload.keys={${keyList(p)}}`);
+  }
+  if ("role" in o) parts.push(`role=${label(o.role)}`);
+  if ("timestamp" in o) parts.push(`timestamp:${typeof o.timestamp}`);
+  return parts.join(" ");
+}
+
+// The leading tag name of a user-role text (e.g. "environment_context"), never the text.
+// Tag names can themselves be owner content, so probeJsonl only prints the ones common
+// enough across files to be injected by the tool (see TAG_MIN_FILES).
+function leadingTag(o: unknown): string | null {
+  if (!isObject(o)) return null;
+  const msg = isObject(o.payload) && o.payload.type === "message" ? o.payload : o.type === "message" ? o : null;
+  if (!msg || msg.role !== "user" || !Array.isArray(msg.content)) return null;
+  for (const c of msg.content) {
+    if (isObject(c) && typeof c.text === "string") {
+      const m = /^\s*<([a-z_][a-z0-9_-]{0,39})>/i.exec(c.text);
+      return m ? `<${m[1]}>` : NO_TAG;
+    }
+  }
+  return null;
+}
+
+function top(m: Map<string, number>, n: number): string[] {
+  return [...m.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, n)
+    .map(([k, v]) => `  ${String(v).padStart(8)}  ${k}`);
+}
+
+function probeJsonl(files: string[], out: string[], maxFileBytes: number): void {
+  const sigs = new Map<string, number>();
+  const tags = new Map<string, number>();
+  const tagFiles = new Map<string, Set<string>>();
+  let lines = 0;
+  let bad = 0;
+  let skippedLarge = 0;
+  for (const f of files) {
+    if (statSync(f).size > maxFileBytes) {
+      skippedLarge++;
+      continue;
+    }
+    for (const line of readFileSync(f, "utf8").split("\n")) {
+      if (!line.trim()) continue;
+      lines++;
+      let o: unknown;
+      try {
+        o = JSON.parse(line);
+      } catch {
+        bad++;
+        continue;
+      }
+      const s = signature(o);
+      sigs.set(s, (sigs.get(s) ?? 0) + 1);
+      const t = leadingTag(o);
+      if (t) {
+        tags.set(t, (tags.get(t) ?? 0) + 1);
+        if (!tagFiles.has(t)) tagFiles.set(t, new Set());
+        tagFiles.get(t)!.add(f);
+      }
+    }
+  }
+  out.push(`  ${files.length} files, ${lines} lines, ${bad} not JSON, ${skippedLarge} files over ${maxFileBytes} bytes skipped`);
+  out.push("  record signatures (count, signature):", ...top(sigs, 60));
+  if (tags.size) {
+    const filesWithUser = new Set([...tagFiles.values()].flatMap((fs) => [...fs])).size;
+    const minFiles = Math.max(TAG_MIN_FILES, Math.ceil(0.1 * filesWithUser));
+    const shown = new Map<string, number>();
+    let hidden = 0;
+    for (const [t, n] of tags) {
+      if (t === NO_TAG || (tagFiles.get(t)?.size ?? 0) >= minFiles) shown.set(t, n);
+      else hidden += n;
+    }
+    if (hidden > 0) shown.set(`(leading tags in fewer than ${minFiles} files, names withheld)`, hidden);
+    out.push("  user-message leading tags (count, tag):", ...top(shown, 30));
+  }
+}
+
+export function probe(cfg: MinerConfig, maxFileBytes = MAX_FILE_BYTES): string {
+  const out: string[] = ["gadget probe: structure only, no content", ""];
+
+  out.push(`Codex sessions: ${cfg.codexDir}`);
+  const codex = listFiles(cfg.codexDir, (p) => p.endsWith(".jsonl"));
+  if (codex.length === 0) out.push("  not found or empty");
+  else probeJsonl(codex, out, maxFileBytes);
+  out.push("");
+
+  out.push(`Antigravity: ${cfg.antigravityDir}`);
+  const census = censusFiles(cfg.antigravityDir);
+  if (census.files === 0) out.push("  not found or empty");
+  else {
+    out.push(`  ${census.files} files, ${census.bytes} bytes`);
+    out.push("  by extension:", ...Object.entries(census.byExtension).sort().map(([k, v]) => `  ${String(v).padStart(8)}  ${k}`));
+    const all = listFiles(cfg.antigravityDir);
+    const jsonl = all.filter((p) => extname(p) === ".jsonl");
+    const json = all.filter((p) => extname(p) === ".json");
+    if (jsonl.length) {
+      out.push("  .jsonl files:");
+      probeJsonl(jsonl, out, maxFileBytes);
+    }
+    if (json.length) {
+      const sigs = new Map<string, number>();
+      let bad = 0;
+      let large = 0;
+      for (const f of json) {
+        if (statSync(f).size > maxFileBytes) {
+          large++;
+          continue;
+        }
+        try {
+          const s = signature(JSON.parse(readFileSync(f, "utf8")));
+          sigs.set(s, (sigs.get(s) ?? 0) + 1);
+        } catch {
+          bad++;
+        }
+      }
+      out.push(
+        `  .json files: ${json.length}, ${bad} not JSON, ${large} files over ${maxFileBytes} bytes skipped`,
+        "  signatures (count, signature):",
+        ...top(sigs, 30),
+      );
+    }
+  }
+  return out.join("\n");
+}

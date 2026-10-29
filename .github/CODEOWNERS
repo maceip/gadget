@@ -1,0 +1,5 @@
+# Owner-only paths. Binding only with branch protection on main requiring code-owner review.
+/acceptance/ @maceip
+/scripts/guard_* @maceip
+/.github/ @maceip
+/AGENTS.md @maceip
