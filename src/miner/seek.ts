@@ -161,12 +161,36 @@ function firstPositional(args: string[], valueOpts: Set<string>): string | undef
   return undefined;
 }
 
-// ASK_AGENT: an owner turn in a coding-agent session that asks a question.
-// Requests phrased as questions ("can you fix X?") are not seeking.
+// ASK_AGENT: an owner turn in a coding-agent session that asks a question. The question
+// can come anywhere, often after a pasted log or diff, so the whole turn is read, minus
+// fenced code. A sentence is a question if it ends in "?" right after a word (not
+// "x ? y", "a?.b", or "?q=" in a URL), or if it is the turn's first or last sentence and
+// starts with a question word. Requests phrased as questions ("can you fix X?") are not
+// seeking. Returns the question sentences (the search query), or null.
+const REQUEST = /^(can|could|would|will) you\b|^please\b/i;
+const QUESTION_START = /^(what|how|why|where|when|which|who|whose|is|are|does|do(?! not\b)|did|should|has|have)\b/i;
+const QUESTION_END = /[\p{L}\p{N}"'`]\?+$/u;
+
+export function askedQuestion(text: string): string | null {
+  const sentences: string[] = [];
+  let inFence = false;
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    if (line.startsWith("```")) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence || !line) continue;
+    sentences.push(...line.split(/(?<=[.!?])\s+/).filter(Boolean));
+  }
+  const found = sentences.filter(
+    (s, i) => !REQUEST.test(s) && (QUESTION_END.test(s) || ((i === 0 || i === sentences.length - 1) && QUESTION_START.test(s))),
+  );
+  return found.length > 0 ? found.join(" ").slice(0, 500) : null;
+}
+
 export function isQuestion(text: string): boolean {
-  const head = text.trim().slice(0, 500);
-  if (/^(can|could|would|will) you\b|^please\b/i.test(head)) return false;
-  return /\?/.test(head) || /^(what|how|why|where|when|which|who|whose|is|are|does|do|did|should|has|have)\b/i.test(head);
+  return askedQuestion(text) !== null;
 }
 
 const DOCS_HOSTS = /(^|\.)(docs\.rs|pkg\.go\.dev|devdocs\.io|developer\.mozilla\.org|developer\.apple\.com|learn\.microsoft\.com)$|^docs\.[^.]+\.[^.]+$|\.readthedocs\.(io|org)$/i;
@@ -212,8 +236,9 @@ export function classifyEventAll(e: EpisodicEvent): Seek[] {
     const q = docsSiteQuery(e.sourceUri, e.contentText);
     return q ? [{ kind: "HELP_LOOKUP", query: q }] : [];
   }
-  if ((e.source === "codex_session" || e.source === "antigravity_session") && meta.role === "user" && isQuestion(e.contentText)) {
-    return [{ kind: "ASK_AGENT", query: e.contentText.trim().slice(0, 500) }];
+  if ((e.source === "codex_session" || e.source === "antigravity_session") && meta.role === "user") {
+    const question = askedQuestion(e.contentText);
+    return question ? [{ kind: "ASK_AGENT", query: question }] : [];
   }
   return [];
 }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { classifyEvent, isQuestion } from "../src/miner/seek.js";
+import { askedQuestion, classifyEvent, classifyEventAll, isQuestion } from "../src/miner/seek.js";
 import { splitCommands } from "../src/miner/shell.js";
 import { ev, T0 } from "./helpers.js";
 
@@ -101,4 +101,25 @@ test("classify: chrome searches and codex user questions; assistant turns never"
   });
   assert.equal(classifyEvent(ev("codex_session", T0, "where is it set?", { role: "assistant" })), null);
   assert.equal(classifyEvent(ev("git", T0, "grep for the flag")), null);
+});
+
+test("ASK_AGENT: a question after a long pasted log is found, and it is the query", () => {
+  const log = Array.from({ length: 40 }, (_, i) => `[build] step ${i} ok: wrote out/chunk-${i}.js (12kb)`).join("\n");
+  const turn = `${log}\nerror: unknown flag --jitless\n\nwhy does the wasm build reject --jitless now?`;
+  assert.ok(turn.indexOf("why does") > 500);
+  assert.deepEqual(classifyEventAll(ev("codex_session", T0, turn, { role: "user" })), [
+    { kind: "ASK_AGENT", query: "why does the wasm build reject --jitless now?" },
+  ]);
+});
+
+test("ASK_AGENT: question marks in code, URLs, and ternaries are not questions; requests are not seeking", () => {
+  assert.equal(isQuestion("fetch https://example.com/search?q=tierup and save it"), false);
+  assert.equal(isQuestion("change it to user?.name ?? 'anon'"), false);
+  assert.equal(isQuestion("set x = ok ? 1 : 0 in build.ts"), false);
+  assert.equal(isQuestion("update this:\n```\nconst a = b?.c;\nwhy?\n```\nthanks"), false);
+  assert.equal(isQuestion("here is the log:\nE1 failed\ncan you fix this?"), false);
+  assert.equal(isQuestion("Do not change the public API."), false);
+  assert.equal(askedQuestion("Fix the test. Also, which file sets the flag?"), "Also, which file sets the flag?");
+  assert.equal(askedQuestion("huh??"), "huh??");
+  assert.equal(askedQuestion("where did we set the tier-up flag"), "where did we set the tier-up flag");
 });
