@@ -10,6 +10,7 @@
 import { existsSync } from "node:fs";
 import { runStdioMcpServer } from "../mcp/server.js";
 import { formatReplayTable, runReplay } from "../runtime/replay.js";
+import { startWorkbenchServer } from "../web/server.js";
 import { evaluateCeiling } from "./ceiling.js";
 import { loadConfig } from "./config.js";
 import { buildEpisodes } from "./episodes.js";
@@ -108,7 +109,17 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
 
-  console.error("usage: npm run mine -- ingest | report [--seed N] [--out DIR] | probe | replay | mcp");
+  if (cmd === "web" || cmd === "label") {
+    const portArg = flag(args, "--port") ?? process.env.GADGET_PORT;
+    const port = portArg ? Number(portArg) : 4321;
+    const started = await startWorkbenchServer(cfg, { port });
+    console.log(`gadget tagging workbench & chrome capture listening at ${started.url}`);
+    console.log(`active report directory: ${started.getReportDir()}`);
+    await new Promise(() => {});
+    return 0;
+  }
+
+  console.error("usage: npm run mine -- ingest | report [--seed N] [--out DIR] | probe | replay | mcp | web [--port N]");
   return 2;
 }
 

@@ -209,3 +209,74 @@ export function parseChromeHistory(historyPath: string): ParseResult {
   }
   return { events, counts };
 }
+
+// Parses ~/.gadget/capture/chrome.jsonl written by the Chrome extension capture bridge.
+export function parseChromeCapture(text: string, path: string): ParseResult {
+  const counts = emptyCounts();
+  const events: EpisodicEvent[] = [];
+  const seen = new Set<string>();
+
+  for (const raw of text.split("\n")) {
+    if (!raw.trim()) continue;
+    counts.read++;
+    let rec: Record<string, unknown>;
+    try {
+      rec = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      bump(counts.unknown, "bad_json");
+      continue;
+    }
+    const url = typeof rec.url === "string" ? rec.url.trim() : "";
+    const ts =
+      typeof rec.timestampMs === "number"
+        ? Math.round(rec.timestampMs)
+        : typeof rec.timestamp === "number"
+          ? Math.round(rec.timestamp)
+          : NaN;
+    if (!url || !Number.isFinite(ts) || ts <= 0) {
+      bump(counts.skipped, "invalid_record");
+      continue;
+    }
+    const dedupeKey = `${url}|${Math.floor(ts / 1000)}`;
+    if (seen.has(dedupeKey)) {
+      bump(counts.skipped, "duplicate_capture");
+      continue;
+    }
+    seen.add(dedupeKey);
+
+    const explicitQuery = typeof rec.searchQuery === "string" ? rec.searchQuery.trim() : "";
+    const term = explicitQuery || searchTermFromUrl(url);
+    if (term) {
+      events.push(
+        makeEvent({
+          source: "chrome",
+          timestampMs: ts,
+          contentText: term,
+          sourceUri: url,
+          metadataJson: JSON.stringify({ kind: "search", via: "extension", capture: path }),
+        }),
+      );
+      counts.parsed++;
+      continue;
+    }
+
+    const title = typeof rec.title === "string" ? rec.title.trim() : "";
+    const extraText =
+      typeof rec.selectedText === "string" && rec.selectedText.trim()
+        ? `\n${rec.selectedText.trim()}`
+        : typeof rec.visibleText === "string" && rec.visibleText.trim()
+          ? `\n${rec.visibleText.trim().slice(0, 400)}`
+          : "";
+    events.push(
+      makeEvent({
+        source: "chrome",
+        timestampMs: ts,
+        contentText: `${title}\n${url}${extraText}`.trim(),
+        sourceUri: url,
+        metadataJson: JSON.stringify({ kind: "visit", via: "extension", capture: path }),
+      }),
+    );
+    counts.parsed++;
+  }
+  return { events, counts };
+}

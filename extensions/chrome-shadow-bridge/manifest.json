@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "Gadget Ambient Recall Capture",
+  "version": "0.1.0",
+  "description": "Read-only Chrome capture for Gadget: records page visits, search queries, DOM text excerpts, and history sync to local ~/.gadget/capture/chrome.jsonl.",
+  "permissions": [
+    "tabs",
+    "activeTab",
+    "history",
+    "storage"
+  ],
+  "host_permissions": [
+    "<all_urls>",
+    "http://127.0.0.1:4321/*",
+    "http://localhost:4321/*"
+  ],
+  "action": {
+    "default_title": "Gadget Ambient Recall Capture",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ]
+}

@@ -34,3 +34,24 @@ node -e '
   if (got !== want) { console.error("interactive: got " + got + ", want " + want); process.exit(1); }
   console.log("zsh hook interactive: OK (" + recs.length + " records)");
 ' "$tmp2/.gadget/capture/zsh.jsonl"
+
+# 4. Preceding precmd hook (e.g. starship) must not clobber $? before _gadget_precmd runs.
+tmp4=$(mktemp -d)
+cat > "$tmp4/.zshrc" <<EOF
+autoload -Uz add-zsh-hook
+fake_prompt_precmd() { true; }
+add-zsh-hook precmd fake_prompt_precmd
+source $repo/capture/zsh/gadget.zsh
+EOF
+printf 'false\nexit 0\n' \
+  | (cd "$tmp4" && HOME="$tmp4" ZDOTDIR="$tmp4" zsh +Z -d -i >/dev/null 2>&1)
+node -e '
+  const fs = require("fs");
+  const recs = fs.readFileSync(process.argv[1], "utf8").split("\n").filter(Boolean).map(JSON.parse);
+  if (recs.length !== 1 || recs[0].cmd !== "false" || recs[0].exit !== 1) {
+    console.error("precmd order: got " + JSON.stringify(recs));
+    process.exit(1);
+  }
+  console.log("zsh hook precmd order: OK (exit=1 preserved)");
+' "$tmp4/.gadget/capture/zsh.jsonl"
+rm -rf "$tmp4"

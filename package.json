@@ -13,7 +13,8 @@
     "test": "tsc -p . && node --disable-warning=ExperimentalWarning --test \"dist/test/**/*.test.js\"",
     "test:zsh": "bash test/zsh/run.sh",
     "guards": "node scripts/guard_no_send.mjs && node scripts/guard_acceptance_manifest.mjs",
-    "mine": "tsc -p . && node --disable-warning=ExperimentalWarning dist/src/miner/cli.js"
+    "mine": "tsc -p . && node --disable-warning=ExperimentalWarning dist/src/miner/cli.js",
+    "web": "tsc -p . && node --disable-warning=ExperimentalWarning dist/src/web/cli.js"
   },
   "devDependencies": {
     "@types/node": "22.20.5",

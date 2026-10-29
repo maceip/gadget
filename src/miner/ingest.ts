@@ -1,8 +1,8 @@
 import { chmodSync, existsSync, readFileSync, renameSync, rmSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import type { MinerConfig } from "./config.js";
 import { findAntigravityTranscripts, parseAntigravityTranscript } from "./parsers/antigravity.js";
-import { parseChromeHistory, discoverChromiumHistoryFiles } from "./parsers/chrome.js";
+import { parseChromeCapture, parseChromeHistory, discoverChromiumHistoryFiles } from "./parsers/chrome.js";
 import { parseCodexSession } from "./parsers/codex.js";
 import { censusFiles, listFiles } from "./parsers/files.js";
 import { assertOutsideRepo } from "./paths.js";
@@ -78,13 +78,22 @@ export function ingest(cfg: MinerConfig): IngestSummary {
       add("zsh", cfg.zshHistory, kept, r.counts);
     } else missing("zsh", cfg.zshHistory);
 
+    const chromeCapturePath = join(dirname(cfg.zshHook), "chrome.jsonl");
+    const hasChromeCapture = existsSync(chromeCapturePath);
+    if (hasChromeCapture) {
+      const r = parseChromeCapture(readFileSync(chromeCapturePath, "utf8"), chromeCapturePath);
+      add("chrome", chromeCapturePath, r.events, r.counts);
+    }
+
     const { files: histories, unreadableRoots } = discoverChromiumHistoryFiles(cfg.chromiumRoots);
     for (const u of unreadableRoots) {
       const counts = emptyCounts();
       bump(counts.unknown, "unreadable_history_root");
       add("chrome", u.root, [], counts, u.error);
     }
-    if (histories.length === 0 && unreadableRoots.length === 0) missing("chrome", cfg.chromiumRoots.join(", "));
+    if (histories.length === 0 && unreadableRoots.length === 0 && !hasChromeCapture) {
+      missing("chrome", cfg.chromiumRoots.join(", "));
+    }
     for (const h of histories) {
       let r;
       try {

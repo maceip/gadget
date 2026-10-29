@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Gadget Ambient Recall Capture</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        width: 320px;
+        background: #0b0f17;
+        color: #e2e8f0;
+        font: 12px/1.45 -apple-system, BlinkMacSystemFont, "Inter", sans-serif;
+        border: 1px solid #1e293b;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 36px;
+        padding: 0 12px;
+        border-bottom: 1px solid #1e293b;
+        background: #0f172a;
+      }
+      header strong {
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+      }
+      .pill {
+        font: 11px/1 "SF Mono", Menlo, monospace;
+        padding: 3px 6px;
+        border-radius: 3px;
+        border: 1px solid #334155;
+        background: #1e293b;
+        color: #94a3b8;
+      }
+      .pill.ok {
+        border-color: #14532d;
+        background: #052e16;
+        color: #4ade80;
+      }
+      .pill.err {
+        border-color: #7f1d1d;
+        background: #450a0a;
+        color: #f87171;
+      }
+      main {
+        padding: 10px 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 4px 0;
+        border-bottom: 1px solid #1e293b;
+      }
+      .mono {
+        font-family: "SF Mono", Menlo, monospace;
+        color: #cbd5e1;
+      }
+      .actions {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        margin-top: 4px;
+      }
+      button,
+      a.btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        height: 30px;
+        padding: 0 10px;
+        border: 1px solid #334155;
+        background: #1e293b;
+        color: #f8fafc;
+        font: 500 12px/1 -apple-system, BlinkMacSystemFont, sans-serif;
+        border-radius: 4px;
+        cursor: pointer;
+        text-decoration: none;
+      }
+      button.primary {
+        background: #2563eb;
+        border-color: #3b82f6;
+      }
+      button:hover,
+      a.btn:hover {
+        filter: brightness(1.1);
+      }
+      #feedback {
+        min-height: 16px;
+        font-size: 11px;
+        color: #94a3b8;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <strong>Gadget Browser Capture</strong>
+      <span id="conn-pill" class="pill">Checking</span>
+    </header>
+    <main>
+      <div class="row">
+        <span>Captured Chrome Events</span>
+        <span id="chrome-count" class="mono">-</span>
+      </div>
+      <div class="row">
+        <span>Captured Zsh Commands</span>
+        <span id="zsh-count" class="mono">-</span>
+      </div>
+      <div class="row">
+        <span>Episode Labels Done</span>
+        <span id="label-count" class="mono">-</span>
+      </div>
+      <div class="actions">
+        <button id="btn-sync" class="primary" type="button">Sync Chrome History to Gadget</button>
+        <button id="btn-tab" type="button">Capture Active Tab</button>
+        <a class="btn" href="http://127.0.0.1:4321" target="_blank" rel="noreferrer">Open Episode Tagging Workbench</a>
+      </div>
+      <div id="feedback"></div>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

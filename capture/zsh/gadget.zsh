@@ -14,13 +14,25 @@
 
 zmodload zsh/datetime 2>/dev/null || return 0
 zmodload -F zsh/files b:zf_mkdir 2>/dev/null
+setopt EXTENDED_HISTORY INC_APPEND_HISTORY_TIME 2>/dev/null
 
 typeset -g _gadget_cmd=""
 typeset -g _gadget_start=""
 typeset -g _gadget_log="${GADGET_ZSH_LOG:-$HOME/.gadget/capture/zsh.jsonl}"
 
-# An existing log keeps the mode it was created with; make it private once per shell.
-[[ -f $_gadget_log ]] && chmod 600 -- "$_gadget_log" 2>/dev/null
+# Ensure the capture directory (700) and log file (600) exist immediately and stay private.
+{
+  if [[ ! -e $_gadget_log ]]; then
+    if (( $+builtins[zf_mkdir] )); then
+      zf_mkdir -p -m 700 -- "${_gadget_log:h}"
+    else
+      mkdir -p -m 700 -- "${_gadget_log:h}"
+    fi
+    ( umask 077; : >> "$_gadget_log" )
+  else
+    chmod 600 -- "$_gadget_log"
+  fi
+} 2>/dev/null
 
 # Sets REPLY to $1 escaped for a JSON string.
 _gadget_json_escape() {
@@ -67,4 +79,6 @@ _gadget_precmd() {
 autoload -Uz add-zsh-hook 2>/dev/null && {
   add-zsh-hook preexec _gadget_preexec
   add-zsh-hook precmd _gadget_precmd
+  # Prepend _gadget_precmd so earlier precmd hooks (e.g. starship) do not reset $? to 0 first.
+  precmd_functions=(_gadget_precmd ${precmd_functions:#_gadget_precmd})
 }

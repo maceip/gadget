@@ -52,9 +52,15 @@ Overrides go in `~/.gadget/config.json`, for example:
 { "gitRoots": ["/Users/me/code"], "gitMaxDepth": 3, "sampleSize": 25, "seed": 7 }
 ```
 
-## 5. Label the sample
+## 5. Label the sample in the Web Tagging Workbench (or `labels.csv`)
 
-Open `report.md`, then fill in `labels.csv` for the 25 sampled episodes: was it real seeking (Y/N), and was the answer already in your data (Y/N). If fewer than 20 look like real seeking, seek detection gets fixed before anything else.
+```bash
+npm run web
+```
+
+Opens the Phase 0 Episode Tagging Workbench at `http://127.0.0.1:4321`. It loads the 25 sampled episodes from your latest report directory (`~/.gadget/reports/<timestamp>/labels.csv`) with full context events and local hits from `~/.gadget/miner.db`. Every `Y/N` button press or keyboard shortcut (`Y`/`N` for real seeking, `D`/`M` for answer in data, `Enter` for both `Y` + advance, `J`/`K` for next/prev) writes immediately to `labels.csv` on disk.
+
+ The workbench server on `127.0.0.1:4321` also receives live browser visits, search queries, and Chrome History API sync from the unpacked Chrome extension in `extensions/chrome-shadow-bridge` (`chrome://extensions` -> Load unpacked -> select `extensions/chrome-shadow-bridge`), writing them to `~/.gadget/capture/chrome.jsonl` (mode `600`).
 
 ## Try it on fake data first
 
