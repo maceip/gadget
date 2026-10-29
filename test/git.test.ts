@@ -192,3 +192,11 @@ test("runtime repo grep at a past moment uses the checkout HEAD had then, not a 
     store.close();
   }
 });
+
+test("git: a committer time later than local arrival does not postpone the commit", () => {
+  const sha = "f".repeat(40);
+  const rec = `${sha}\u001f\u001f500\u001fother@example.com\u001fOther\u001ffuture-dated\u001f\u001e`;
+  const r = parseGitLog(rec, "/r", [{ sha, atMs: 100_000 }], "owner@example.com");
+  assert.equal(r.events[0]!.timestampMs, 100_000);
+  assert.equal(JSON.parse(r.events[0]!.metadataJson).committed_ms, 500_000);
+});

@@ -60,6 +60,9 @@ export function parseReflog(output: string): ReflogEntry[] {
 // Earliest reflog time reaching each commit. Entries are taken in time order; each one
 // marks the commits it reaches that no earlier entry reached. Ancestors of a marked
 // commit are always marked already, so the walk stops there.
+// Known gap: `git fetch --unshallow` adds ancestors without moving any ref, so it
+// leaves no reflog entry (nor any other durable trace: .git/shallow is removed, and
+// pack mtimes are reset by every gc). Those ancestors get the shallow clone's time.
 export function availabilityTimes(parents: Map<string, string[]>, reflog: ReflogEntry[]): Map<string, number> {
   const at = new Map<string, number>();
   for (const { sha, atMs } of reflog) {
@@ -110,8 +113,10 @@ export function parseGitLog(output: string, repo: string, reflog: ReflogEntry[] 
     events.push(
       makeEvent({
         source: "git",
-        // A clock that ran backwards cannot make a commit available before it existed.
-        timestampMs: reflogMs === undefined ? r.committedMs : Math.max(reflogMs, r.committedMs),
+        // The reflog time is this machine's clock at arrival. A later committer time
+        // comes from another clock (skew or a future-dated commit) and is kept only as
+        // metadata.
+        timestampMs: reflogMs ?? r.committedMs,
         workspacePath: repo,
         contentText: r.text,
         sourceUri: `git:${repo}@${r.sha}`,

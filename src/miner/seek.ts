@@ -181,7 +181,9 @@ export function askedQuestion(text: string): string | null {
       continue;
     }
     if (inFence || !line) continue;
-    sentences.push(...line.split(/(?<=[.!?])\s+/).filter(Boolean));
+    // List and quote markers ("- ", "1. ", "> ") are not part of the sentence.
+    const text = line.replace(/^(?:(?:[-*+]|\d+[.)]|>)\s*)+/, "");
+    sentences.push(...text.split(/(?<=[.!?])\s+/).filter(Boolean));
   }
   const found = sentences.filter(
     (s, i) => !REQUEST.test(s) && (QUESTION_END.test(s) || ((i === 0 || i === sentences.length - 1) && QUESTION_START.test(s))),

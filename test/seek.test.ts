@@ -123,3 +123,10 @@ test("ASK_AGENT: question marks in code, URLs, and ternaries are not questions; 
   assert.equal(askedQuestion("huh??"), "huh??");
   assert.equal(askedQuestion("where did we set the tier-up flag"), "where did we set the tier-up flag");
 });
+
+test("ASK_AGENT: list and quote markers do not hide a request or a question", () => {
+  assert.equal(isQuestion("E1 failed\nE2 failed\n- can you fix the build?"), false);
+  assert.equal(isQuestion("notes:\n1. please add a test?"), false);
+  assert.equal(askedQuestion("> why does the wasm build reject --jitless?"), "why does the wasm build reject --jitless?");
+  assert.equal(askedQuestion("- what sets the tier-up flag"), "what sets the tier-up flag");
+});
