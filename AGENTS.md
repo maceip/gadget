@@ -110,7 +110,7 @@ We define what "looking for something" and "found it" look like. We do not defin
 | Resolution | Detected from |
 |---|---|
 | `PASTE_FROM_SOURCE` | clipboard copy from a source, then paste into the workspace (needs clipboard capture, deferred; see section 11) |
-| `COMMAND_SUCCEEDED` | exit code 0 after failures (zsh hook going forward; tool results in Codex sessions for backfill) |
+| `COMMAND_SUCCEEDED` | exit code 0 after failures (zsh hook going forward; Codex tool results for backfill once their format is documented from `probe` output) |
 | `TEST_PASSED` | test command exits 0 after failing |
 | `WORK_RESUMED` | fallback: seeking stops, normal work resumes (weakest; backfill only) |
 
@@ -279,6 +279,7 @@ Read-only phone capture APK; message threads as a searcher.
 - zsh history has no exit codes, so backfilled resolutions are weak. The forward hook fixes this going forward.
 - The Antigravity transcript format is undocumented. The miner only counts those files; `npm run mine -- probe` prints their structure (keys and types, no content) so a parser can be written against real files.
 - The Codex parser is written from the public rollout format and is unverified against the owner's files until `probe` output has been reviewed. Unknown record shapes are counted, not dropped.
+- Codex tool-call records (commands the agent ran, with exit codes) are not parsed yet, so backfilled Codex sessions cannot produce `COMMAND_SUCCEEDED`. Their shape must come from `probe` output on real files, not be guessed.
 - Clipboard capture deferred: a pbpaste poller would log passwords copied from password managers. Needs a macOS-native helper that skips concealed pasteboard types. Not started.
 - Docs-site visits are not yet classified as `HELP_LOOKUP`; only shell `man`, `tldr`, and `--help` are.
 

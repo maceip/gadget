@@ -3,7 +3,7 @@
 
 export interface SimpleCommand {
   argv: string[];
-  pipedFrom?: string; // argv[0] (after wrappers) of the command feeding this one through a pipe
+  pipedFrom?: string[]; // first two words (after wrappers) of the command piping into this one
 }
 
 type Token = { kind: "word"; value: string } | { kind: "op"; value: string };
@@ -59,7 +59,13 @@ export function tokenize(line: string): Token[] {
       inWord = true;
       continue;
     }
-    if (c === "#" && !inWord) break; // comment
+    if (c === "#" && !inWord) {
+      // comment: skip to the end of this line; later lines are still commands
+      const nl = line.indexOf("\n", i);
+      if (nl < 0) break;
+      i = nl - 1;
+      continue;
+    }
     if (c === " " || c === "\t") {
       flush();
       continue;
@@ -145,6 +151,14 @@ export function tokenize(line: string): Token[] {
 
 const WRAPPERS = new Set(["sudo", "command", "builtin", "time", "noglob", "nocorrect", "nice", "nohup", "exec", "env"]);
 const XARGS_VALUE_OPTS = new Set(["-n", "-I", "-P", "-L", "-s", "-d", "-E", "-J", "-R"]);
+// Wrapper options that consume the following word (`sudo -u root rg x`).
+const WRAPPER_VALUE_OPTS: Record<string, Set<string>> = {
+  sudo: new Set(["-u", "-g", "-h", "-p", "-C", "-U", "-D", "-r", "-t", "-T"]),
+  env: new Set(["-u", "-C", "-P", "-S"]),
+  nice: new Set(["-n"]),
+  time: new Set(["-o", "-f"]),
+  exec: new Set(["-a"]),
+};
 
 // Strips leading VAR=value assignments, wrappers (sudo, env, time, ...) and xargs with its options.
 export function stripWrappers(argv: string[]): string[] {
@@ -154,12 +168,18 @@ export function stripWrappers(argv: string[]): string[] {
     const w = argv[i];
     if (w === undefined) break;
     if (WRAPPERS.has(w)) {
-      // A wrapper with nothing to run is the command itself (`env`, `time`).
+      // Skip the wrapper's options (and their values) and env-style assignments.
+      // A wrapper with nothing left to run is the command itself (`env`, `time`).
+      const valueOpts = WRAPPER_VALUE_OPTS[w];
       let j = i + 1;
-      while (j < argv.length && (argv[j]!.startsWith("-") || /^[A-Za-z_][A-Za-z0-9_]*=/.test(argv[j]!))) j++;
+      while (j < argv.length) {
+        const a = argv[j]!;
+        if (a.startsWith("-")) j += valueOpts?.has(a) ? 2 : 1;
+        else if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(a)) j++;
+        else break;
+      }
       if (j >= argv.length) break;
-      i++;
-      while (i < argv.length && argv[i]!.startsWith("-")) i++;
+      i = j;
       continue;
     }
     if (w === "xargs") {
@@ -178,12 +198,12 @@ export function stripWrappers(argv: string[]): string[] {
 export function splitCommands(line: string): SimpleCommand[] {
   const commands: SimpleCommand[] = [];
   let argv: string[] = [];
-  let pipedFrom: string | undefined;
+  let pipedFrom: string[] | undefined;
   let skipNextWord = false;
   const end = (nextPiped: boolean) => {
     const stripped = stripWrappers(argv);
     if (stripped.length > 0) commands.push(pipedFrom ? { argv: stripped, pipedFrom } : { argv: stripped });
-    pipedFrom = nextPiped ? stripped[0] : undefined;
+    pipedFrom = nextPiped && stripped.length > 0 ? stripped.slice(0, 2) : undefined;
     argv = [];
   };
   for (const t of tokenize(line)) {

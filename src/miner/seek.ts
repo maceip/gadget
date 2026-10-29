@@ -24,13 +24,37 @@ const GREP_FAMILY: Record<string, string> = {
   grep: "grep", egrep: "grep", fgrep: "grep", rg: "rg", ag: "ag", ack: "ag", "ack-grep": "ag",
 };
 
-// Commands whose output, piped into grep, is status listing rather than looking something up.
+// Commands whose output, piped into grep, is a status listing rather than content being
+// searched. Single-purpose tools match by name; multi-purpose tools only for their listing
+// subcommands (`docker ps | grep api` lists, `docker logs svc | grep timeout` searches).
 const STATUS_LISTERS = new Set([
-  "ps", "pgrep", "lsof", "env", "printenv", "ls", "ll", "la", "exa", "eza", "docker", "kubectl",
-  "netstat", "ss", "brew", "pip", "pip3", "npm", "pnpm", "yarn", "top", "jobs", "alias", "set",
-  "declare", "df", "du", "ifconfig", "ip", "launchctl", "systemctl", "mount", "dpkg", "rpm",
-  "apt", "defaults", "ioreg", "system_profiler", "uname", "sw_vers", "nvm", "pyenv",
+  "ps", "pgrep", "lsof", "env", "printenv", "ls", "ll", "la", "exa", "eza", "netstat", "ss",
+  "top", "jobs", "alias", "set", "declare", "df", "du", "ifconfig", "ip", "mount", "ioreg",
+  "system_profiler", "uname", "sw_vers",
 ]);
+const STATUS_SUBCOMMANDS: Record<string, Set<string>> = {
+  docker: new Set(["ps", "images"]),
+  kubectl: new Set(["get"]),
+  brew: new Set(["list", "ls"]),
+  pip: new Set(["list", "freeze"]),
+  pip3: new Set(["list", "freeze"]),
+  npm: new Set(["ls", "list"]),
+  pnpm: new Set(["ls", "list"]),
+  yarn: new Set(["list"]),
+  launchctl: new Set(["list"]),
+  systemctl: new Set(["list-units", "list-unit-files", "status"]),
+  dpkg: new Set(["-l"]),
+  rpm: new Set(["-qa"]),
+  apt: new Set(["list"]),
+  nvm: new Set(["ls", "list"]),
+  pyenv: new Set(["versions"]),
+};
+
+function isStatusListing(upstream: string[] | undefined): boolean {
+  const [tool, sub] = upstream ?? [];
+  if (!tool) return false;
+  return STATUS_LISTERS.has(tool) || (STATUS_SUBCOMMANDS[tool]?.has(sub ?? "") ?? false);
+}
 
 const FIND_NAME_PREDICATES = new Set(["-name", "-iname", "-path", "-ipath", "-wholename", "-iwholename", "-regex", "-iregex"]);
 const FD_VALUE_OPTS = new Set(["-e", "-t", "-E", "-d", "-j", "-S", "-c", "-x", "-X", "--extension", "--type", "--exclude", "--max-depth", "--threads", "--size", "--color", "--exec", "--exec-batch", "--changed-within", "--changed-before", "--owner", "--base-directory", "--search-path"]);
@@ -64,14 +88,14 @@ export function classifyCommand(cmd: SimpleCommand): Seek | null {
   return null;
 }
 
-function grepSeek(family: string, args: string[], pipedFrom: string | undefined): Seek | null {
-  if (pipedFrom && STATUS_LISTERS.has(pipedFrom)) return null;
+function grepSeek(family: string, args: string[], pipedFrom: string[] | undefined): Seek | null {
+  if (isStatusListing(pipedFrom)) return null;
   const explicit = family === "ag" ? undefined : optionValue(args, ["-e", "--regexp"]);
   const q = explicit ?? firstPositional(args, GREP_VALUE_OPTS[family]!);
   return q ? { kind: "GREP", query: q } : null;
 }
 
-function gitSeek(args: string[], pipedFrom: string | undefined): Seek | null {
+function gitSeek(args: string[], pipedFrom: string[] | undefined): Seek | null {
   let i = 0;
   while (i < args.length && args[i]!.startsWith("-")) {
     if (GIT_GLOBAL_VALUE_OPTS.has(args[i]!)) i++;

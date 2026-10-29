@@ -121,6 +121,19 @@ test("episodes: seek, then a failure, then a success resolves the episode", () =
   assert.equal(eps[0]!.costMs, 4 * MIN);
 });
 
+test("episodes: a failure already fixed before seeking is not resolved again by a later success", () => {
+  const eps = buildEpisodes(
+    [
+      ev("zsh_hook", T0, "npm test", { exit: 1, end_ms: T0 }),
+      ev("zsh_hook", T0 + MIN, "npm test", { exit: 0, end_ms: T0 + MIN }),
+      ev("zsh_hook", T0 + 2 * MIN, "rg tierUp", { exit: 0, end_ms: T0 + 2 * MIN }),
+      ev("zsh_hook", T0 + 3 * MIN, "npm test", { exit: 0, end_ms: T0 + 3 * MIN }),
+    ].map(stored),
+    params,
+  );
+  assert.equal(eps[0]!.resolution, undefined);
+});
+
 test("episodes: git commits are not evidence that the owner resumed work", () => {
   const eps = buildEpisodes([ev("zsh", T0, "rg tierUp"), ev("git", T0 + MIN, "Upstream: bump deps")].map(stored), params);
   assert.equal(eps[0]!.resolution, undefined);

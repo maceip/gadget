@@ -52,6 +52,15 @@ const CASES: Array<[string, string | null, string?]> = [
   ["cat <<EOF > a.txt\nrg body\nEOF\nrg real", "GREP", "real"],
   ["cat <<-END\n\tgrep tabbed\n\tEND", null],
   ["grep <<< 'input text' pattern", "GREP", "pattern"],
+  ["echo setup # note\nrg needle", "GREP", "needle"],
+  ["sudo -u root rg needle", "GREP", "needle"],
+  ["env -u FOO rg needle", "GREP", "needle"],
+  ["nice -n 10 rg needle", "GREP", "needle"],
+  ["docker logs api | grep timeout", "GREP", "timeout"],
+  ["kubectl logs pod-1 | rg crash", "GREP", "crash"],
+  ["docker ps | grep api", null],
+  ["kubectl get pods | grep api", null],
+  ["brew list | grep node", null],
 ];
 
 for (const [cmd, kind, query] of CASES) {
@@ -65,7 +74,7 @@ for (const [cmd, kind, query] of CASES) {
 test("shell: pipes carry the upstream program; redirections are dropped", () => {
   assert.deepEqual(splitCommands("ps aux | grep -v grep > out.txt; echo done"), [
     { argv: ["ps", "aux"] },
-    { argv: ["grep", "-v", "grep"], pipedFrom: "ps" },
+    { argv: ["grep", "-v", "grep"], pipedFrom: ["ps", "aux"] },
     { argv: ["echo", "done"] },
   ]);
 });

@@ -71,8 +71,10 @@ function findResolution(
   lastSeekMs: number,
   p: EpisodeParams,
 ): SeekingEpisode["resolution"] {
-  // Commands that failed (per the zsh hook) from the start of the context window on,
-  // including failures after the last seek (seek -> fail -> fix -> pass).
+  // Commands still failing (per the zsh hook), tracked in time order from the start of
+  // the context window: a success clears its command's failure, so only failures that are
+  // unresolved when seeking ends can be resolved by a later success. Failures after the
+  // last seek count too (seek -> fail -> fix -> pass).
   const failed = new Set<string>();
   const noteFailure = (e: StoredEvent) => {
     if (e.source === "zsh_hook" && exitCode(e) !== undefined && exitCode(e) !== 0) {
@@ -80,7 +82,11 @@ function findResolution(
       if (key) failed.add(key);
     }
   };
-  for (let i = contextStartIndex; i <= lastSeekIndex; i++) noteFailure(events[i]!);
+  for (let i = contextStartIndex; i <= lastSeekIndex; i++) {
+    const e = events[i]!;
+    noteFailure(e);
+    if (e.source === "zsh_hook" && exitCode(e) === 0) failed.delete(commandKey(e) ?? "");
+  }
 
   const deadline = lastSeekMs + p.resolutionWindowMs;
   let firstWork: StoredEvent | undefined;
