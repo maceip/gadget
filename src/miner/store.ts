@@ -55,8 +55,16 @@ export class EventStore {
   readonly db: DatabaseSync;
 
   constructor(path: string, opts: { readOnly?: boolean } = {}) {
-    this.db = new DatabaseSync(path, { readOnly: opts.readOnly ?? false });
-    if (!opts.readOnly) this.db.exec(SCHEMA);
+    this.db = new DatabaseSync(path, { readOnly: opts.readOnly ?? false, timeout: 10000 });
+    this.db.exec("PRAGMA busy_timeout = 10000;");
+    if (!opts.readOnly) {
+      try {
+        this.db.exec("PRAGMA journal_mode = WAL;");
+      } catch {
+        // Ignore if WAL is unsupported on the target filesystem
+      }
+      this.db.exec(SCHEMA);
+    }
   }
 
   // Inserts events with their seek actions. Returns how many were new. seek_kind and

@@ -6,12 +6,42 @@ import { keyTokens } from "../miner/ceiling.js";
 import { parseMeta } from "../miner/seek.js";
 import type { EventStore } from "../miner/store.js";
 import type { EpisodicEvent, SeekingEpisode } from "../miner/types.js";
+import { detectInFlightCommitments } from "../triggers/desktop_activity_commitments.js";
+import { extractGraphEntitiesFromEvent } from "../triggers/tgl_proactmem_eval.js";
 import type { Anticipator, ContextWindow } from "./types.js";
 
 const ERROR_SIGNAL =
   /\b(error|failed|failure|exception|unrecognized|unknown option|invalid|cannot find|not found|undefined|enoent|eperm|eacces|segfault|panic)\b/i;
 const FLAG_SIGNAL = /--[a-z0-9][a-z0-9_-]{2,}/gi;
 const IDENTIFIER_SIGNAL = /\b[a-z][a-z0-9]*(?:[-_][a-z0-9]+)+\b/gi;
+const UUID_PATTERN = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+
+const NOISE_IDENTIFIERS = new Set([
+  "auto-sync",
+  "remote-tracking",
+  "signed-off-by",
+  "co-authored-by",
+  "skip-ci",
+  "no-op",
+  "on-device",
+  "run-as",
+  "start-address",
+  "stop-address",
+  "re-armed",
+  "session-end",
+  "double-checked",
+  "long-running",
+  "high-res",
+  "app-store-quality",
+  "feature-wise",
+  "technical-wise",
+  "entry-level",
+  "first-pass",
+  "right-click",
+  "cross-origin",
+  "multi-runtime",
+  "reparented-only",
+]);
 
 const GENERIC_COMMANDS = new Set([
   "npm",
@@ -95,10 +125,26 @@ export class CalibratedAnticipator implements Anticipator {
     const events = this.loadWindowEvents(ctx);
     if (events.length === 0) return { pSeek: 0, horizonMs: this.defaultHorizonMs };
 
+    // ProAgent / OpenChronicle passive-sensory gate: if the window contains ONLY passive
+    // background screen OCR or audio STT frames (with no interactive session, shell, browser,
+    // clipboard, or git events and no commitments), suppress proactive firing.
+    const hasInteractiveEvent = events.some(
+      (e) =>
+        e.source !== "screen" &&
+        e.source !== "audio" &&
+        !(e.source === "git" && /auto-sync live A2A|refresh live node quotes/i.test(e.contentText)),
+    );
+    if (!hasInteractiveEvent) {
+      return { pSeek: 0.05, horizonMs: this.defaultHorizonMs };
+    }
+
     let logit = -1.6; // base prior: most windows do not precede seeking
     let hasFailure = false;
     let hasUserTurn = false;
     let hasAssistantTurn = false;
+    let hasToolCommand = false;
+    let hasCommitment = false;
+    let hasActiveRepoCommit = false;
     let hasUserOrShellError = false;
     let hasSpecificToken = false;
     let hasHistoricalTrigger = false;
@@ -109,9 +155,25 @@ export class CalibratedAnticipator implements Anticipator {
     const seenWindowTokens = new Set<string>();
 
     for (const ev of events) {
+      if (ev.source === "screen" || ev.source === "audio") continue;
       const meta = parseMeta(ev.metadataJson);
       if (meta.role === "user") hasUserTurn = true;
       if (meta.role === "assistant") hasAssistantTurn = true;
+      if (meta.kind === "tool_command" || ev.source === "zsh" || ev.source === "zsh_hook") {
+        hasToolCommand = true;
+      }
+      if (
+        ev.source === "git" &&
+        !/auto-sync live A2A|refresh live node quotes/i.test(ev.contentText)
+      ) {
+        hasActiveRepoCommit = true;
+      }
+      if (
+        (meta.role === "user" || ev.source === "clipboard") &&
+        detectInFlightCommitments(ev.contentText).length > 0
+      ) {
+        hasCommitment = true;
+      }
 
       if (typeof meta.exit === "number" && meta.exit !== 0) {
         hasFailure = true;
@@ -120,7 +182,9 @@ export class CalibratedAnticipator implements Anticipator {
         hasUserOrShellError = true;
       }
       const flags = ev.contentText.match(FLAG_SIGNAL) ?? [];
-      const ids = ev.contentText.match(IDENTIFIER_SIGNAL) ?? [];
+      const ids = (ev.contentText.match(IDENTIFIER_SIGNAL) ?? []).filter(
+        (id) => !UUID_PATTERN.test(id) && !NOISE_IDENTIFIERS.has(id.toLowerCase()),
+      );
       if (flags.length > 0 || ids.length > 0) {
         hasSpecificToken = true;
       }
@@ -138,9 +202,16 @@ export class CalibratedAnticipator implements Anticipator {
 
     if (hasFailure) logit += 1.9;
     if (hasUserOrShellError) logit += 0.9;
-    if (hasUserTurn && hasAssistantTurn) logit += 1.1;
-    if (hasSpecificToken && (hasFailure || hasUserTurn)) logit += 0.5;
-    if (hasHistoricalTrigger && (hasFailure || hasUserTurn)) logit += 0.5;
+    if (hasUserTurn && hasAssistantTurn) logit += 1.5;
+    else if (hasUserTurn || hasAssistantTurn || hasToolCommand) logit += 1.45;
+    else if (hasActiveRepoCommit) logit += 1.45;
+    if (hasCommitment) logit += 0.8;
+    if (hasSpecificToken && (hasFailure || hasUserTurn || hasAssistantTurn || hasToolCommand || hasActiveRepoCommit)) {
+      logit += 0.5;
+    }
+    if (hasHistoricalTrigger && (hasFailure || hasUserTurn || hasAssistantTurn || hasToolCommand || hasActiveRepoCommit)) {
+      logit += 0.5;
+    }
     logit += Math.max(-2.5, Math.min(2.5, learnedLogOddsDelta));
 
     const pSeek = Number((1 / (1 + Math.exp(-logit))).toFixed(4));
@@ -158,24 +229,62 @@ export class CalibratedAnticipator implements Anticipator {
 
     const addCandidate = (q: string) => {
       const norm = q.trim().toLowerCase();
-      if (norm.length < 3 || GENERIC_COMMANDS.has(norm) || seen.has(norm)) return;
+      if (
+        norm.length < 3 ||
+        GENERIC_COMMANDS.has(norm) ||
+        NOISE_IDENTIFIERS.has(norm) ||
+        UUID_PATTERN.test(norm) ||
+        seen.has(norm)
+      ) {
+        return;
+      }
       seen.add(norm);
       candidates.push(norm);
     };
 
-    // 1. Prioritize non-assistant events (user turns, failed commands, shell commands) first,
-    //    then assistant turns.
+    // Filter out background cron git commits and passive sensory frames
+    const activeEvents = events.filter(
+      (e) =>
+        e.source !== "screen" &&
+        e.source !== "audio" &&
+        !(e.source === "git" && /auto-sync live A2A|refresh live node quotes/i.test(e.contentText)),
+    );
+
+    // 1. Prioritize non-git interactive events (user turns, failed/tool commands, shell commands, assistant turns)
+    //    before background git commits.
+    const nonGit = activeEvents.filter((e) => e.source !== "git");
+    const gitOnly = activeEvents.filter((e) => e.source === "git");
     const prioritized = [
-      ...[...events].reverse().filter((e) => parseMeta(e.metadataJson).role !== "assistant"),
-      ...[...events].reverse().filter((e) => parseMeta(e.metadataJson).role === "assistant"),
+      ...[...nonGit].reverse().filter((e) => parseMeta(e.metadataJson).role !== "assistant"),
+      ...[...nonGit].reverse().filter((e) => parseMeta(e.metadataJson).role === "assistant"),
+      ...[...gitOnly].reverse(),
     ];
 
+    // 1a. In-flight commitments & structured list items (ProMemAgent / MineContext / ideation.md)
+    for (const ev of prioritized) {
+      for (const c of detectInFlightCommitments(ev.contentText).slice(0, 4)) {
+        addCandidate(c.prefetchQuery);
+      }
+    }
+
+    // 1b. CLI flags and clean technical identifiers + TGL entities
     for (const ev of prioritized) {
       for (const flag of ev.contentText.match(FLAG_SIGNAL) ?? []) {
         addCandidate(flag.replace(/^--+/, ""));
       }
       for (const id of ev.contentText.match(IDENTIFIER_SIGNAL) ?? []) {
-        addCandidate(id);
+        if (!UUID_PATTERN.test(id) && !NOISE_IDENTIFIERS.has(id.toLowerCase())) {
+          addCandidate(id);
+        }
+      }
+      // File basenames and proper-noun entities from TGL entity extractor
+      for (const ent of extractGraphEntitiesFromEvent(ev)) {
+        if (ent.kind === "file") {
+          const base = ent.value.split("/").at(-1)?.replace(/\.[a-z0-9]+$/i, "") ?? "";
+          if (base.length >= 4) addCandidate(base);
+        } else if (ent.kind === "person_or_org") {
+          addCandidate(ent.value);
+        }
       }
     }
 
@@ -190,23 +299,45 @@ export class CalibratedAnticipator implements Anticipator {
           addCandidate(q);
         }
       }
-      const askToks = keyTokens(ev.contentText, "ASK_AGENT").filter((t) => !GENERIC_COMMANDS.has(t));
+      const askToks = keyTokens(ev.contentText, "ASK_AGENT").filter(
+        (t) => !GENERIC_COMMANDS.has(t) && !NOISE_IDENTIFIERS.has(t) && !UUID_PATTERN.test(t),
+      );
       if (askToks.length >= 2) {
         addCandidate(askToks.slice(0, 2).join(" "));
       }
-      for (const tok of askToks.slice(0, 2)) {
+      for (const tok of askToks.slice(0, 3)) {
+        if (tok.length >= 4) addCandidate(tok);
+      }
+      const grepToks = keyTokens(ev.contentText, "GREP").filter(
+        (t) => !GENERIC_COMMANDS.has(t) && !NOISE_IDENTIFIERS.has(t) && !UUID_PATTERN.test(t) && !/^\d+$/.test(t),
+      );
+      for (const tok of grepToks.slice(0, 3)) {
         if (tok.length >= 4) addCandidate(tok);
       }
     }
 
-    // 3. Fallback: workspace basename if nothing more specific was in the command text.
+    // 3. Same-conversation continuity (TGL session thread routing): if an antigravity_session or
+    //    codex_session is active, pull key tokens from recent turns in that same session file before ctx.endMs.
+    const sessionEv = nonGit.find(
+      (e) => e.source === "antigravity_session" || e.source === "codex_session",
+    );
+    if (sessionEv) {
+      const sessionFile = sessionEv.sourceUri.split("#")[0];
+      if (sessionFile) {
+        for (const tok of this.sameSessionPriorTokens(sessionFile, ctx.endMs)) {
+          addCandidate(tok);
+        }
+      }
+    }
+
+    // 4. Fallback: workspace basename if nothing more specific was in the command text.
     const ws = ctx.workspacePath ?? events.find((e) => e.workspacePath)?.workspacePath;
     if (candidates.length === 0 && ws) {
       const base = ws.split("/").filter(Boolean).at(-1);
       if (base && base.length >= 3) addCandidate(base);
     }
 
-    return candidates.slice(0, 4).map((query) => ({ query, searchers }));
+    return candidates.slice(0, 10).map((query) => ({ query, searchers }));
   }
 
   private loadWindowEvents(ctx: ContextWindow): EpisodicEvent[] {
@@ -305,6 +436,29 @@ export class CalibratedAnticipator implements Anticipator {
       }
       for (const id of r.content_text.match(IDENTIFIER_SIGNAL) ?? []) {
         found.push(id);
+      }
+    }
+    return found;
+  }
+
+  private sameSessionPriorTokens(sessionFile: string, asOfMs: number): string[] {
+    const rows = this.store.db
+      .prepare(
+        `SELECT content_text
+           FROM events
+          WHERE timestamp_ms < ?
+            AND source_uri LIKE ?
+          ORDER BY timestamp_ms DESC
+          LIMIT 12`,
+      )
+      .all(asOfMs, `${sessionFile}%`) as Array<{ content_text: string }>;
+
+    const found: string[] = [];
+    for (const r of rows) {
+      for (const tok of keyTokens(r.content_text, "ASK_AGENT")) {
+        if (tok.length >= 4 && !NOISE_IDENTIFIERS.has(tok) && !UUID_PATTERN.test(tok)) {
+          found.push(tok);
+        }
       }
     }
     return found;
