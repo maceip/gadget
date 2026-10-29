@@ -91,7 +91,7 @@ export function renderReport(input: ReportInput): { markdown: string; csv: strin
   out.push("");
 
   out.push("## Episodes", "");
-  out.push(`${episodes.length} episodes from ${events.filter((e) => e.seek).length} seek actions.`, "");
+  out.push(`${episodes.length} episodes from ${events.reduce((n, e) => n + e.seeks.length, 0)} seek actions.`, "");
   const kinds = new Map<string, number>();
   for (const ep of episodes) for (const k of new Set(ep.seekActions.map((a) => a.kind))) kinds.set(k, (kinds.get(k) ?? 0) + 1);
   out.push("| seek kind | episodes containing it |", "|---|---|");
@@ -180,8 +180,10 @@ export function writeReport(input: ReportInput, outDirOverride?: string): { dir:
   const { markdown, csv } = renderReport(input);
   const reportPath = join(dir, "report.md");
   const labelsPath = join(dir, "labels.csv");
-  writeFileSync(reportPath, markdown, { mode: 0o600 });
-  writeFileSync(labelsPath, csv, { mode: 0o600 });
+  // "wx": create only. Never overwrite, and never follow an existing file or symlink
+  // at these names (it could point into the repo).
+  writeFileSync(reportPath, markdown, { mode: 0o600, flag: "wx" });
+  writeFileSync(labelsPath, csv, { mode: 0o600, flag: "wx" });
   return { dir, reportPath, labelsPath };
 }
 

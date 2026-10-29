@@ -8,6 +8,7 @@ import {
   findChromiumHistoryFiles,
   parseChromeHistory,
   searchTermFromUrl,
+  snapshot,
 } from "../src/miner/parsers/chrome.js";
 import { parseCodexSession, stripLeadingContext } from "../src/miner/parsers/codex.js";
 import { T0, tmp } from "./helpers.js";
@@ -62,6 +63,26 @@ test("chrome: search terms, visits, exact times, search pages not double counted
   assert.equal(fromUrl.contentText, "wasm tier up flag");
   assert.equal(JSON.parse(fromUrl.metadataJson).via, "url");
   assert.equal(r2.events.filter((e) => JSON.parse(e.metadataJson).kind === "visit").length, 1);
+});
+
+test("chrome: the snapshot is retried while the source keeps changing, then gives up", () => {
+  const root = tmp();
+  mkdirSync(join(root, "Default"));
+  const path = join(root, "Default", "History");
+  makeHistory(path, { withSearch: true });
+
+  // Each try reads the fingerprint before and after copying. These differ on the first
+  // two tries and match on the third.
+  const seq = ["a", "b", "c", "d", "e", "e"];
+  let i = 0;
+  const copy = snapshot(path, tmp(), 5, () => seq[Math.min(i++, seq.length - 1)]!);
+  assert.equal(i, 6);
+  const db = new DatabaseSync(copy, { readOnly: true });
+  assert.equal((db.prepare("SELECT count(*) AS n FROM visits").get() as { n: number }).n, 3);
+  db.close();
+
+  let n = 0;
+  assert.throws(() => snapshot(path, tmp(), 3, () => String(n++)), /kept changing while being copied \(3 tries\)/);
 });
 
 test("chrome: search terms are read from known search-results URLs only", () => {

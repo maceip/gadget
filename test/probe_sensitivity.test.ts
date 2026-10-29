@@ -7,7 +7,7 @@ import { defaultConfig } from "../src/miner/config.js";
 import { buildEpisodes } from "../src/miner/episodes.js";
 import { probe } from "../src/miner/probe.js";
 import { renderReport, writeReport } from "../src/miner/report.js";
-import { classifyEvent } from "../src/miner/seek.js";
+import { withSeeks } from "../src/miner/seek.js";
 import { computeSensitivity, sensitivityGrid } from "../src/miner/sensitivity.js";
 import { EventStore } from "../src/miner/store.js";
 import { DAY, ev, MIN, REPO, T0, tmp } from "./helpers.js";
@@ -51,7 +51,7 @@ test("sensitivity: one parameter varies at a time; the seek gap moves episode co
 
   const store = new EventStore(join(tmp(), "s.db"));
   const events = [ev("git", T0 - DAY, "Add quuxifier"), ...[0, 3, 6, 9].map((m) => ev("zsh", T0 + m * MIN, `rg quuxifier${m}`))];
-  store.insert(events.map((event) => ({ event, seek: classifyEvent(event) })));
+  store.insert(withSeeks(events));
   const rows = computeSensitivity(store.allEventsSorted(), store, base);
   const byGap = (g: number) => rows.find((r) => r.seekGapMs === g * MIN && r.contextWindowMs === 10 * MIN)!;
   assert.equal(byGap(2).episodes, 4);

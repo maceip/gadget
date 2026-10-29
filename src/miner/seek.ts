@@ -145,20 +145,28 @@ export function isQuestion(text: string): boolean {
   return /\?/.test(head) || /^(what|how|why|where|when|which|who|whose|is|are|does|do|did|should|has|have)\b/i.test(head);
 }
 
-export function classifyEvent(e: EpisodicEvent): Seek | null {
+// Every seek action in one event. A shell entry can hold several (`rg foo; rg bar`).
+export function classifyEventAll(e: EpisodicEvent): Seek[] {
   if (e.source === "zsh" || e.source === "zsh_hook") {
-    for (const cmd of splitCommands(e.contentText)) {
-      const s = classifyCommand(cmd);
-      if (s) return s;
-    }
-    return null;
+    return splitCommands(e.contentText)
+      .map(classifyCommand)
+      .filter((s): s is Seek => s !== null);
   }
   const meta = parseMeta(e.metadataJson);
-  if (e.source === "chrome" && meta.kind === "search") return { kind: "WEB_SEARCH", query: e.contentText };
+  if (e.source === "chrome" && meta.kind === "search") return [{ kind: "WEB_SEARCH", query: e.contentText }];
   if (e.source === "codex_session" && meta.role === "user" && isQuestion(e.contentText)) {
-    return { kind: "ASK_AGENT", query: e.contentText.trim().slice(0, 500) };
+    return [{ kind: "ASK_AGENT", query: e.contentText.trim().slice(0, 500) }];
   }
-  return null;
+  return [];
+}
+
+// The first seek action in an event, or null.
+export function classifyEvent(e: EpisodicEvent): Seek | null {
+  return classifyEventAll(e)[0] ?? null;
+}
+
+export function withSeeks(events: EpisodicEvent[]): Array<{ event: EpisodicEvent; seeks: Seek[] }> {
+  return events.map((event) => ({ event, seeks: classifyEventAll(event) }));
 }
 
 export function parseMeta(json: string): Record<string, unknown> {

@@ -4,16 +4,17 @@ import { test } from "node:test";
 import { evaluateCeiling, ftsMatch, keyTokens, normalizeQuery } from "../src/miner/ceiling.js";
 import { defaultConfig } from "../src/miner/config.js";
 import { buildEpisodes } from "../src/miner/episodes.js";
-import { classifyEvent } from "../src/miner/seek.js";
+import { withSeeks } from "../src/miner/seek.js";
 import { EventStore } from "../src/miner/store.js";
 import type { EpisodicEvent } from "../src/miner/types.js";
+import { makeEvent } from "../src/miner/event.js";
 import { DAY, ev, MIN, stored, T0, tmp } from "./helpers.js";
 
 const params = defaultConfig("/nonexistent");
 
 function storeWith(events: EpisodicEvent[]): EventStore {
   const s = new EventStore(join(tmp(), "t.db"));
-  s.insert(events.map((event) => ({ event, seek: classifyEvent(event) })));
+  s.insert(withSeeks(events));
   return s;
 }
 
@@ -82,6 +83,59 @@ test("episodes: forward-captured commands never produce the WORK_RESUMED fallbac
     params,
   );
   assert.equal(eps[0]!.resolution, undefined);
+});
+
+test("episodes: a success resolves only the same command in the same folder", () => {
+  const hook = (t: number, cmd: string, exit: number, cwd = "/w/a") =>
+    makeEvent({
+      source: "zsh_hook",
+      timestampMs: t,
+      workspacePath: cwd,
+      contentText: cmd,
+      sourceUri: `hook:${t}`,
+      metadataJson: JSON.stringify({ exit, end_ms: t + 1000 }),
+    });
+  const res = (events: ReturnType<typeof hook>[]) => buildEpisodes(events.map(stored), params)[0]!.resolution;
+
+  assert.equal(res([hook(T0, "npm test", 1), hook(T0 + MIN, "rg tierUp", 0), hook(T0 + 2 * MIN, "npm install", 0)]), undefined);
+  assert.equal(
+    res([hook(T0, "npm test", 1), hook(T0 + MIN, "rg tierUp", 0), hook(T0 + 2 * MIN, "npm test", 0, "/w/other")]),
+    undefined,
+  );
+  assert.equal(
+    res([hook(T0, "npm test", 1), hook(T0 + MIN, "rg tierUp", 0), hook(T0 + 2 * MIN, "npm test -- --grep tier", 0)])?.kind,
+    "TEST_PASSED",
+  );
+});
+
+test("episodes: seek, then a failure, then a success resolves the episode", () => {
+  const eps = buildEpisodes(
+    [
+      ev("zsh_hook", T0, "rg tierUp", { exit: 0, end_ms: T0 }),
+      ev("zsh_hook", T0 + MIN, "make build", { exit: 2, end_ms: T0 + MIN }),
+      ev("zsh_hook", T0 + 3 * MIN, "make build", { exit: 0, end_ms: T0 + 4 * MIN }),
+    ].map(stored),
+    params,
+  );
+  assert.equal(eps[0]!.resolution?.kind, "COMMAND_SUCCEEDED");
+  assert.equal(eps[0]!.costMs, 4 * MIN);
+});
+
+test("episodes: git commits are not evidence that the owner resumed work", () => {
+  const eps = buildEpisodes([ev("zsh", T0, "rg tierUp"), ev("git", T0 + MIN, "Upstream: bump deps")].map(stored), params);
+  assert.equal(eps[0]!.resolution, undefined);
+});
+
+test("episodes: every seek in a compound shell entry becomes a seek action", () => {
+  const eps = buildEpisodes([stored(ev("zsh", T0, "rg foo; rg bar || git log -S baz"))], params);
+  assert.deepEqual(
+    eps[0]!.seekActions.map((a) => [a.kind, a.query]),
+    [
+      ["GREP", "foo"],
+      ["GREP", "bar"],
+      ["GIT_ARCHAEOLOGY", "baz"],
+    ],
+  );
 });
 
 test("episodes: seek actions less than the gap apart chain into one episode", () => {

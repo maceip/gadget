@@ -7,7 +7,7 @@ import { censusFiles, listFiles } from "./parsers/files.js";
 import { discoverRepos, readGitRepo } from "./parsers/git.js";
 import { parseZshHistory } from "./parsers/zsh_history.js";
 import { dedupeHistoryAgainstHook, parseZshHook } from "./parsers/zsh_hook.js";
-import { classifyEvent } from "./seek.js";
+import { withSeeks } from "./seek.js";
 import { EventStore } from "./store.js";
 import { bump, emptyCounts, mergeCounts, type EpisodicEvent, type ParseCounts } from "./types.js";
 
@@ -37,8 +37,8 @@ export function ingest(cfg: MinerConfig): IngestSummary {
   let seeks = 0;
 
   const insertEvents = (events: EpisodicEvent[]) => {
-    const classified = events.map((event) => ({ event, seek: classifyEvent(event) }));
-    seeks += classified.filter((c) => c.seek).length;
+    const classified = withSeeks(events);
+    seeks += classified.reduce((n, c) => n + c.seeks.length, 0);
     inserted += store.insert(classified);
   };
   const record = (source: string, label: string, counts: ParseCounts, note?: string) => {

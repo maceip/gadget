@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { evaluateCeiling } from "../src/miner/ceiling.js";
 import { defaultConfig } from "../src/miner/config.js";
 import { buildEpisodes } from "../src/miner/episodes.js";
 import { isInside, renderReport, sampleIndices, writeReport } from "../src/miner/report.js";
-import { classifyEvent } from "../src/miner/seek.js";
+import { withSeeks } from "../src/miner/seek.js";
 import { EventStore } from "../src/miner/store.js";
 import { emptyCounts } from "../src/miner/types.js";
 import { DAY, ev, MIN, REPO, T0, tmp } from "./helpers.js";
@@ -19,7 +19,7 @@ function input(sampleSize: number) {
     ...Array.from({ length: 30 }, (_, i) => ev("zsh", T0 + i * 10 * MIN, `rg needle${i % 7}`)),
     ev("zsh", T0 + 15 * MIN, "rg -- --jitless"),
   ];
-  store.insert(events.map((event) => ({ event, seek: classifyEvent(event) })));
+  store.insert(withSeeks(events));
   const all = store.allEventsSorted();
   const episodes = buildEpisodes(all, cfg);
   const ceiling = evaluateCeiling(episodes, store);
@@ -57,4 +57,16 @@ test("report: refuses to write inside the repo; writes 600 files outside it", ()
   assert.ok(readFileSync(w.reportPath, "utf8").startsWith("# gadget miner report"));
   assert.equal(statSync(w.reportPath).mode & 0o777, 0o600);
   assert.equal(statSync(w.labelsPath).mode & 0o777, 0o600);
+  // Never overwrites: a second report into the same directory fails.
+  assert.throws(() => writeReport(inp, out), /EEXIST/);
+});
+
+test("report: a report.md symlink planted in the output directory is not followed", () => {
+  const inp = input(3);
+  const out = tmp();
+  const victim = join(tmp(), "tracked-file.txt");
+  writeFileSync(victim, "original\n");
+  symlinkSync(victim, join(out, "report.md"));
+  assert.throws(() => writeReport(inp, out), /EEXIST/);
+  assert.equal(readFileSync(victim, "utf8"), "original\n");
 });

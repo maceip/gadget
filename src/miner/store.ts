@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { MINER_VERSION } from "./event.js";
-import type { EpisodicEvent, ParseCounts, Seek, SeekKind, Source } from "./types.js";
+import type { EpisodicEvent, ParseCounts, Seek, Source } from "./types.js";
 
 // Event row as read back for episode building. contentText is truncated to 200 chars
 // except for shell sources, whose full command is needed for classification.
@@ -12,7 +12,7 @@ export interface StoredEvent {
   contentText: string;
   sourceUri: string;
   metadataJson: string;
-  seek: Seek | null;
+  seeks: Seek[];
 }
 
 export interface Hit {
@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS events (
   is_seek        INTEGER NOT NULL DEFAULT 0,
   seek_kind      TEXT,
   seek_query     TEXT,
+  seeks_json     TEXT NOT NULL DEFAULT '[]',
   miner_version  TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS events_ts ON events(timestamp_ms);
@@ -58,19 +59,21 @@ export class EventStore {
     if (!opts.readOnly) this.db.exec(SCHEMA);
   }
 
-  // Inserts events with their seek classification. Returns how many were new.
-  insert(rows: Array<{ event: EpisodicEvent; seek: Seek | null }>): number {
+  // Inserts events with their seek actions. Returns how many were new. seek_kind and
+  // seek_query hold the first action for simple SQL; seeks_json holds all of them.
+  insert(rows: Array<{ event: EpisodicEvent; seeks: Seek[] }>): number {
     const ins = this.db.prepare(
       `INSERT OR IGNORE INTO events
          (event_id, source, timestamp_ms, workspace_path, content_text, source_uri, metadata_json,
-          is_seek, seek_kind, seek_query, miner_version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          is_seek, seek_kind, seek_query, seeks_json, miner_version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     const fts = this.db.prepare("INSERT INTO events_fts (content_text, event_id) VALUES (?, ?)");
     let added = 0;
     this.db.exec("BEGIN");
     try {
-      for (const { event: e, seek } of rows) {
+      for (const { event: e, seeks } of rows) {
+        const first = seeks[0];
         const r = ins.run(
           e.eventId,
           e.source,
@@ -79,9 +82,10 @@ export class EventStore {
           e.contentText,
           e.sourceUri,
           e.metadataJson,
-          seek ? 1 : 0,
-          seek?.kind ?? null,
-          seek?.query ?? null,
+          seeks.length > 0 ? 1 : 0,
+          first?.kind ?? null,
+          first?.query ?? null,
+          JSON.stringify(seeks),
           MINER_VERSION,
         );
         if (Number(r.changes) === 1) {
@@ -117,7 +121,7 @@ export class EventStore {
       .prepare(
         `SELECT event_id, source, timestamp_ms, workspace_path,
                 CASE WHEN source IN ('zsh', 'zsh_hook') THEN content_text ELSE substr(content_text, 1, 200) END AS content_text,
-                source_uri, metadata_json, is_seek, seek_kind, seek_query
+                source_uri, metadata_json, seeks_json
            FROM events ORDER BY timestamp_ms, event_id`,
       )
       .all() as Array<Record<string, unknown>>;
@@ -129,7 +133,7 @@ export class EventStore {
       contentText: r.content_text as string,
       sourceUri: r.source_uri as string,
       metadataJson: r.metadata_json as string,
-      seek: r.is_seek ? { kind: r.seek_kind as SeekKind, query: (r.seek_query as string) ?? "" } : null,
+      seeks: JSON.parse(r.seeks_json as string) as Seek[],
     }));
   }
 

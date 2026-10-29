@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { makeEvent } from "../src/miner/event.js";
-import { classifyEvent } from "../src/miner/seek.js";
+import { classifyEventAll } from "../src/miner/seek.js";
 import type { StoredEvent } from "../src/miner/store.js";
 import type { EpisodicEvent, Source } from "../src/miner/types.js";
 
@@ -31,6 +31,6 @@ export function stored(e: EpisodicEvent): StoredEvent {
     contentText: e.contentText,
     sourceUri: e.sourceUri,
     metadataJson: e.metadataJson,
-    seek: classifyEvent(e),
+    seeks: classifyEventAll(e),
   };
 }

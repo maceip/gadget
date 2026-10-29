@@ -54,6 +54,37 @@ export function findChromiumHistoryFiles(roots: string[]): string[] {
   return found.sort();
 }
 
+const SIDE_FILES = ["-wal", "-journal"];
+
+function fingerprint(historyPath: string): string {
+  return ["", ...SIDE_FILES]
+    .map((suffix) => {
+      try {
+        const st = statSync(historyPath + suffix);
+        return `${suffix}:${st.size}:${st.mtimeMs}`;
+      } catch {
+        return `${suffix}:absent`;
+      }
+    })
+    .join("|");
+}
+
+// Copies History and its WAL/journal as one snapshot: if Chrome wrote to any of them
+// while copying (size or mtime changed), the copy is retried. Throws after 5 tries.
+export function snapshot(historyPath: string, dir: string, attempts = 5, fp = fingerprint): string {
+  const copy = join(dir, "History");
+  for (let i = 0; i < attempts; i++) {
+    const before = fp(historyPath);
+    for (const suffix of SIDE_FILES) rmSync(copy + suffix, { force: true });
+    copyFileSync(historyPath, copy);
+    for (const suffix of SIDE_FILES) {
+      if (existsSync(historyPath + suffix)) copyFileSync(historyPath + suffix, copy + suffix);
+    }
+    if (fp(historyPath) === before) return copy;
+  }
+  throw new Error(`${historyPath} kept changing while being copied (${attempts} tries)`);
+}
+
 // Reads one History file. The file is copied first (Chrome keeps it locked) and the
 // copy is opened read-only. Search terms become WEB_SEARCH candidates; visits to the
 // search-results pages behind those terms are skipped so they are not double counted.
@@ -63,11 +94,7 @@ export function parseChromeHistory(historyPath: string): ParseResult {
   const events: EpisodicEvent[] = [];
   const dir = mkdtempSync(join(tmpdir(), "gadget-chrome-"));
   try {
-    const copy = join(dir, "History");
-    copyFileSync(historyPath, copy);
-    for (const suffix of ["-wal", "-journal"]) {
-      if (existsSync(historyPath + suffix)) copyFileSync(historyPath + suffix, copy + suffix);
-    }
+    const copy = snapshot(historyPath, dir);
     const db = new DatabaseSync(copy, { readOnly: true });
     try {
       const tables = new Set(

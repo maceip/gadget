@@ -6,9 +6,10 @@
 # Install: add to ~/.zshrc
 #   source /path/to/gadget/capture/zsh/gadget.zsh
 #
-# Pure zsh: no subprocess per command. Never breaks the shell: every error is
-# swallowed. Commands starting with a space are not recorded. The log is created
-# with mode 600 in a mode 700 directory; it holds whatever you type, secrets included.
+# Pure zsh: no subprocess per command (one chmod per new shell if the log exists).
+# Never breaks the shell: every error is swallowed. Commands starting with a space
+# are not recorded. The log is created with mode 600 in a mode 700 directory, and an
+# existing log is reset to 600; it holds whatever you type, secrets included.
 # Override the path with GADGET_ZSH_LOG.
 
 zmodload zsh/datetime 2>/dev/null || return 0
@@ -17,6 +18,9 @@ zmodload -F zsh/files b:zf_mkdir 2>/dev/null
 typeset -g _gadget_cmd=""
 typeset -g _gadget_start=""
 typeset -g _gadget_log="${GADGET_ZSH_LOG:-$HOME/.gadget/capture/zsh.jsonl}"
+
+# An existing log keeps the mode it was created with; make it private once per shell.
+[[ -f $_gadget_log ]] && chmod 600 -- "$_gadget_log" 2>/dev/null
 
 # Sets REPLY to $1 escaped for a JSON string.
 _gadget_json_escape() {

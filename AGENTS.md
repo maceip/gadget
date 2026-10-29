@@ -36,7 +36,7 @@ These exist because previous agents claimed work was done when it was not.
 1. **Done means verified.** A task is done only with the commit sha, the CI run URL on that sha, and the command output. Otherwise write "not verified". "Should work" is not a status.
 2. **Report failures verbatim.** Paste the failing output. Never present a failure as a success with caveats.
 3. **No invented facts.** Do not write numbers, benchmark results, file paths, API names, or citations you did not measure, open, or fetch during this task. A paper citation needs the URL and a verbatim quote. If you don't know, say so.
-4. **Never edit `acceptance/`, `scripts/guard_*`, or `CODEOWNERS`.** They belong to the owner. If a test there fails, fix the code. Never skip, disable, or loosen a test to get green.
+4. **Never edit `acceptance/`, `scripts/guard_*`, or `CODEOWNERS`** unless the owner asked for that specific change. They belong to the owner. A PR that touches them must say so in its description, and only the owner merges it. If a test there fails, fix the code. Never skip, disable, or loosen a test to get green.
 5. **LLMs never grade LLM output.** Metrics come from the replay harness against the owner's labels, never from a model judging its own work.
 6. **Stay in scope.** See section 2.
 7. **Status report format:** what you changed, what you ran, the output, what is still unverified.
