@@ -138,3 +138,16 @@ test("ASK_AGENT: requests after an opener are still requests; questions after on
   assert.equal(askedQuestion("So what sets the tier-up flag"), "So what sets the tier-up flag");
   assert.equal(askedQuestion("Also, which file sets the flag?"), "Also, which file sets the flag?");
 });
+
+test("ASK_AGENT: tilde fences are code too; formatting around a question does not hide it", () => {
+  assert.equal(isQuestion("~~~\nwhy?\n~~~\ncan you fix this?"), false);
+  assert.equal(askedQuestion("**Why does the wasm build fail?**"), "**Why does the wasm build fail?**");
+  assert.equal(askedQuestion('"Why?"'), '"Why?"');
+  assert.equal(askedQuestion("_what sets the tier-up flag_"), "_what sets the tier-up flag_");
+  assert.equal(isQuestion("**can you fix the build?**"), false);
+  // Mid-turn, where only the closing "?" can mark it.
+  assert.equal(
+    askedQuestion("Build log is below. **Why does the wasm build fail?** Thanks for looking."),
+    "**Why does the wasm build fail?**",
+  );
+});

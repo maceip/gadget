@@ -117,7 +117,6 @@ test("git: fetched commits are dated when they arrived here, not when upstream c
   assert.deepEqual(JSON.parse(byText.get("upstream: second fix")!.metadataJson), {
     author: "Other",
     committed_ms: Date.UTC(2001, 5, 1),
-    time_from: "reflog",
   });
   assert.equal(byText.has("upstream: tagged only"), false);
   assert.equal(r.counts.skipped.no_local_time, 1);
@@ -145,7 +144,7 @@ test("git: availability is the earliest reflog entry that reaches a commit", () 
   ]);
 });
 
-test("git: reflog lines are parsed and sorted by time; a commit with no reflog time keeps committer time only if the owner made it", () => {
+test("git: reflog lines are parsed and sorted by time; a commit with no reflog time is skipped, even the owner's", () => {
   const sha = (c: string) => c.repeat(40);
   const reflog = parseReflog(
     [`${sha("b")}\u001fHEAD@{200}`, `${sha("a")}\u001frefs/heads/main@{100}`, "garbage", `${sha("c")}\u001fHEAD@{not-a-time}`].join("\n"),
@@ -154,11 +153,11 @@ test("git: reflog lines are parsed and sorted by time; a commit with no reflog t
     { sha: sha("a"), atMs: 100_999 },
     { sha: sha("b"), atMs: 200_999 },
   ]);
-  const rec = (s: string, committer: string) => `${s}\u001f\u001f50\u001f${committer}\u001fA\u001fsubject ${committer}\u001f\u001e`;
-  const r = parseGitLog(rec(sha("d"), "Owner@Example.com") + rec(sha("e"), "other@example.com"), "/r", [], "owner@example.com");
+  const rec = (s: string, author: string) => `${s}\u001f\u001f50\u001f${author}\u001fsubject ${author}\u001f\u001e`;
+  const r = parseGitLog(rec(sha("d"), "Owner") + rec(sha("e"), "Other"), "/r", [{ sha: sha("e"), atMs: 60_999 }]);
   assert.deepEqual(
-    r.events.map((e) => [e.contentText, e.timestampMs, JSON.parse(e.metadataJson).time_from]),
-    [["subject Owner@Example.com", 50_999, "committer"]],
+    r.events.map((e) => [e.contentText, e.timestampMs]),
+    [["subject Other", 60_999]],
   );
   assert.equal(r.counts.skipped.no_local_time, 1);
 });
@@ -195,8 +194,8 @@ test("runtime repo grep at a past moment uses the checkout HEAD had then, not a 
 
 test("git: a committer time later than local arrival does not postpone the commit", () => {
   const sha = "f".repeat(40);
-  const rec = `${sha}\u001f\u001f500\u001fother@example.com\u001fOther\u001ffuture-dated\u001f\u001e`;
-  const r = parseGitLog(rec, "/r", [{ sha, atMs: 100_000 }], "owner@example.com");
+  const rec = `${sha}\u001f\u001f500\u001fOther\u001ffuture-dated\u001f\u001e`;
+  const r = parseGitLog(rec, "/r", [{ sha, atMs: 100_000 }]);
   assert.equal(r.events[0]!.timestampMs, 100_000);
   assert.equal(JSON.parse(r.events[0]!.metadataJson).committed_ms, 500_000);
 });

@@ -84,18 +84,18 @@ export function availabilityTimes(parents: Map<string, string[]>, reflog: Reflog
   return at;
 }
 
-// `ownerEmail` is the repo's user.email. A commit with no reflog time (reachable only
-// from a tag, or from a ref without a reflog) is kept at its committer time only if
-// the owner committed it; anyone else's is skipped, since when it arrived is unknown.
-export function parseGitLog(output: string, repo: string, reflog: ReflogEntry[] = [], ownerEmail = ""): ParseResult {
+// A commit with no reflog time (reachable only from a tag, or from a ref without a
+// reflog) is skipped, whoever committed it: its committer time says who and when it
+// was made somewhere, not when it arrived here.
+export function parseGitLog(output: string, repo: string, reflog: ReflogEntry[] = []): ParseResult {
   const counts = emptyCounts();
   const events: EpisodicEvent[] = [];
-  const records: Array<{ sha: string; parents: string[]; committedMs: number; committer: string; author: string; text: string }> = [];
+  const records: Array<{ sha: string; parents: string[]; committedMs: number; author: string; text: string }> = [];
   for (const raw of output.split(RECORD)) {
     const rec = raw.replace(/^\n+/, "");
     if (!rec) continue;
     counts.read++;
-    const [sha, parents, at, committer, author, subject, body] = rec.split(FIELD);
+    const [sha, parents, at, author, subject, body] = rec.split(FIELD);
     if (!sha || !at || !/^[0-9a-f]{40}$/.test(sha) || !/^\d+$/.test(at) || parents === undefined) {
       bump(counts.skipped, "malformed_record");
       continue;
@@ -104,7 +104,6 @@ export function parseGitLog(output: string, repo: string, reflog: ReflogEntry[] 
       sha,
       parents: parents.split(" ").filter(Boolean),
       committedMs: Number(at) * 1000,
-      committer: committer ?? "",
       author: author ?? "",
       text: `${subject ?? ""}\n${body ?? ""}`.trim(),
     });
@@ -112,26 +111,20 @@ export function parseGitLog(output: string, repo: string, reflog: ReflogEntry[] 
   const available = availabilityTimes(new Map(records.map((r) => [r.sha, r.parents])), reflog);
   for (const r of records) {
     const reflogMs = available.get(r.sha);
-    const ownCommit = ownerEmail !== "" && r.committer.toLowerCase() === ownerEmail.toLowerCase();
-    if (reflogMs === undefined && !ownCommit) {
+    if (reflogMs === undefined) {
       bump(counts.skipped, "no_local_time");
       continue;
     }
     events.push(
       makeEvent({
         source: "git",
-        // The reflog time is this machine's clock at arrival. A later committer time
-        // comes from another clock (skew or a future-dated commit) and is kept only as
-        // metadata.
-        timestampMs: reflogMs ?? endOfSecondMs(r.committedMs / 1000),
+        // The reflog time is this machine's clock at arrival. The committer time comes
+        // from whichever clock made the commit and is kept only as metadata.
+        timestampMs: reflogMs,
         workspacePath: repo,
         contentText: r.text,
         sourceUri: `git:${repo}@${r.sha}`,
-        metadataJson: JSON.stringify({
-          author: r.author,
-          committed_ms: r.committedMs,
-          time_from: reflogMs === undefined ? "committer" : "reflog",
-        }),
+        metadataJson: JSON.stringify({ author: r.author, committed_ms: r.committedMs }),
       }),
     );
     counts.parsed++;
@@ -158,7 +151,7 @@ export function readGitRepo(repo: string, maxCommits: number): ParseResult {
       "--all",
       "--no-color",
       `--max-count=${maxCommits}`,
-      `--format=%H${FIELD}%P${FIELD}%ct${FIELD}%ce${FIELD}%an${FIELD}%s${FIELD}%b${RECORD}`,
+      `--format=%H${FIELD}%P${FIELD}%ct${FIELD}%an${FIELD}%s${FIELD}%b${RECORD}`,
     ]);
   } catch {
     const counts = emptyCounts();
@@ -169,15 +162,9 @@ export function readGitRepo(repo: string, maxCommits: number): ParseResult {
   try {
     reflog = parseReflog(git(repo, ["log", "-g", "--all", "--date=unix", `--format=%H${FIELD}%gD`]));
   } catch {
-    // no reflogs at all: only the owner's own commits keep a time
+    // no reflogs at all: every commit is skipped as no_local_time
   }
-  let ownerEmail = "";
-  try {
-    ownerEmail = git(repo, ["config", "user.email"]).trim();
-  } catch {
-    // unset
-  }
-  const result = parseGitLog(out, repo, reflog, ownerEmail);
+  const result = parseGitLog(out, repo, reflog);
   if (result.counts.read >= maxCommits) bump(result.counts.skipped, "truncated_at_max_commits");
   return result;
 }
