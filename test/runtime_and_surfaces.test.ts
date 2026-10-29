@@ -137,7 +137,7 @@ test("antigravity parser: parses USER_INPUT, PLANNER_RESPONSE, and run_command t
       source: "USER_EXPLICIT",
       status: "DONE",
       created_at: new Date(T0).toISOString(),
-      content: "<USER_REQUEST>\nhow do I pass --wasm-tier-up=false?\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\nCommand Working Directory: /w/vitre\n</ADDITIONAL_METADATA>",
+      content: "<USER_REQUEST>\nhow do I pass --wasm-tier-up=false?\n</USER_REQUEST>",
     },
     {
       step_index: 1,
@@ -184,6 +184,7 @@ test("antigravity parser: parses USER_INPUT, PLANNER_RESPONSE, and run_command t
   const parsed = parseAntigravityTranscript(jsonl, found[0]!);
   assert.equal(parsed.counts.read, 5);
   assert.equal(parsed.counts.parsed, 4); // user turn + failed tool cmd + assistant turn + passed tool cmd
+  assert.ok(parsed.events.every((e) => e.workspacePath === "/w/vitre"), "workspacePath should be backfilled across the conversation");
 
   const eps = buildEpisodes(parsed.events.map(stored), params);
   assert.equal(eps.length, 1);

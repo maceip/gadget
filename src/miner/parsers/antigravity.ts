@@ -45,6 +45,7 @@ export function parseAntigravityTranscript(text: string, path: string): ParseRes
   const counts = emptyCounts();
   const events: EpisodicEvent[] = [];
   let cwd: string | undefined;
+  let firstCwd: string | undefined;
   let pendingCmd: PendingCommand | undefined;
 
   text.split("\n").forEach((line, idx) => {
@@ -74,7 +75,10 @@ export function parseAntigravityTranscript(text: string, path: string): ParseRes
       }
       const rawContent = typeof r.content === "string" ? r.content : "";
       const extractedCwd = extractWorkspaceFromContent(rawContent);
-      if (extractedCwd) cwd = extractedCwd;
+      if (extractedCwd) {
+        cwd = extractedCwd;
+        if (!firstCwd) firstCwd = extractedCwd;
+      }
       const prompt = extractUserRequest(rawContent);
       if (!prompt) {
         bump(counts.skipped, "empty_user_input");
@@ -105,7 +109,10 @@ export function parseAntigravityTranscript(text: string, path: string): ParseRes
           if (isObject(tc) && tc.name === "run_command" && isObject(tc.args)) {
             const cmdLine = unquoteArg(tc.args.CommandLine);
             const argCwd = unquoteArg(tc.args.Cwd);
-            if (argCwd) cwd = argCwd;
+            if (argCwd) {
+              cwd = argCwd;
+              if (!firstCwd) firstCwd = argCwd;
+            }
             if (cmdLine) {
               pendingCmd = { cmd: cmdLine, cwd: argCwd ?? cwd, startMs: ts, stepIndex };
             }
@@ -179,6 +186,12 @@ export function parseAntigravityTranscript(text: string, path: string): ParseRes
     pendingCmd = undefined;
     bump(counts.unknown, safeLabel(type ?? "no_type"));
   });
+
+  if (firstCwd) {
+    for (const e of events) {
+      if (!e.workspacePath) e.workspacePath = firstCwd;
+    }
+  }
 
   return { events, counts };
 }

@@ -87,9 +87,14 @@ test("ask-agent: questions count, requests phrased as questions do not", () => {
   assert.equal(isQuestion("can you fix the build?"), false);
   assert.equal(isQuestion("please add tests"), false);
   assert.equal(isQuestion("fix the failing test"), false);
+  assert.equal(isQuestion("Do not address my recent prompt until you've successfully ran all tests across Node and Python."), false);
+  assert.equal(isQuestion("My Gemini credits are almost depleted. Can you delegate the rest of the task, please?"), false);
+  assert.equal(isQuestion("Delete everything. Stop. Delete all the stuff you've done. Can you explain to me why you thought it was a good idea to add the fake stuff in there?"), false);
+  assert.equal(isQuestion("Nothing works on my phone. OK, did you lie today? Did you actually test anything on any of the harnesses or the emulator?"), false);
+  assert.equal(isQuestion("<send_user_message_question_reply> [{\"question\":\"Is this the full article?\"}]"), false);
 });
 
-test("classify: chrome searches and codex user questions; assistant turns never", () => {
+test("classify: chrome searches, codex/antigravity tool_command shell searches, and user questions; assistant turns never", () => {
   assert.deepEqual(classifyEvent(ev("chrome", T0, "wasm tier up flag", { kind: "search" })), {
     kind: "WEB_SEARCH",
     query: "wasm tier up flag",
@@ -99,6 +104,32 @@ test("classify: chrome searches and codex user questions; assistant turns never"
     kind: "ASK_AGENT",
     query: "where is the tier-up flag set?",
   });
+  assert.deepEqual(
+    classifyEvent(
+      ev("codex_session", T0, "rg -n -i 'acuityblue|cortex|snowflake' /Users/mac/.codex/memories/MEMORY.md", {
+        role: "tool",
+        kind: "tool_command",
+        exit: 1,
+      }),
+    ),
+    {
+      kind: "GREP",
+      query: "acuityblue|cortex|snowflake",
+    },
+  );
+  assert.deepEqual(
+    classifyEvent(
+      ev("antigravity_session", T0, 'git grep -n -C 15 "ensureKotlinStdlib" app/ide-core/', {
+        role: "tool",
+        kind: "tool_command",
+        exit: 0,
+      }),
+    ),
+    {
+      kind: "GREP",
+      query: "ensureKotlinStdlib",
+    },
+  );
   assert.equal(classifyEvent(ev("codex_session", T0, "where is it set?", { role: "assistant" })), null);
   assert.equal(classifyEvent(ev("git", T0, "grep for the flag")), null);
 });

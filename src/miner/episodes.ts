@@ -137,6 +137,22 @@ function findResolution(
   for (let j = lastSeekIndex + 1; j < events.length; j++) {
     const e = events[j]!;
     if (e.timestampMs > deadline) break;
+    if (e.source === "clipboard") {
+      const span = e.contentText.trim();
+      if (span.length >= 4) {
+        for (let k = j + 1; k < events.length && events[k]!.timestampMs <= deadline; k++) {
+          const next = events[k]!;
+          if (next.source !== "clipboard" && next.contentText.includes(span)) {
+            return {
+              kind: "PASTE_FROM_SOURCE",
+              sourceUri: e.sourceUri,
+              answerSpan: span,
+              atMs: next.timestampMs,
+            };
+          }
+        }
+      }
+    }
     if (isBackfillWorkEvent(e)) return { kind: "WORK_RESUMED", sourceUri: e.sourceUri, atMs: e.timestampMs };
   }
   return undefined;

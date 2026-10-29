@@ -168,13 +168,17 @@ function firstPositional(args: string[], valueOpts: Set<string>): string | undef
 // question if it ends in "?" right after a word or a placeholder (not "x ? y" or "a?.b"),
 // or if it is the turn's first or last sentence and starts with a question word. A
 // sentence with a request clause ("can you fix X?", "Given that, could you ...") is not
-// seeking. Returns the question sentences, with code and URLs restored (the search
-// query), or null.
-const REQUEST = /^(?:can|could|would|will) you\b|^please\s+\S/i;
+// seeking, nor is "Do not ..."/"Don't ...". A turn that opens with a tool's reply tag,
+// or that scolds the agent ("did you lie", "why would you"), is not seeking at all.
+// Returns the question sentences, with code and URLs restored (the search query), or null.
+const SYSTEM_REPLY_TAG = /^<(send_user_message_question_reply|external_codex_apps_|environment_context|permissions|collaboration_mode|turn_aborted)\b/i;
+const RHETORICAL_SCOLDING =
+  /\b(did you lie|you['’]?re lying|you lied|how could you|what the hell|why would you|so you['’]?re telling me|i want a refund|burn it all down|delete everything|did you (actually|really|even|set up|check|push|run|test)\b|why (did|do|don['’]?t|are) you\b|what are you (doing|waiting|running)\b|what task are you\b|who is your implementation agent\b|are you using .* subagents\b|how did you imagine\b|do you (want to know|care|prefer)\b)/i;
+const REQUEST = /^(?:can|could|would|will) you\b|^please\s+\S|^do\s+not\b|^don['’]?t\b/i;
 // Opening formatting (**, _, quotes, brackets) and discourse openers ("Also, can you
 // ...", "Then could you ...") come off before the request and question-word tests.
 const OPENER = /^(?:[*_"'`(\[]+|(?:also|and|then|so|ok|okay|now|but|hey|btw|next|finally|lastly)\b[,:]?\s*)+/i;
-const QUESTION_START = /^(what|how|why|where|when|which|who|whose|is|are|does|do(?! not\b)|did|should|has|have)\b/i;
+const QUESTION_START = /^(what|how|why|where|when|which|who|whose|is|are|does|do(?!\s+not\b|n['’]?t\b)|did|should|has|have)\b/i;
 // Placeholders for inline code and URLs: private-use characters around an index.
 const HOLD_OPEN = "";
 const HOLD_CLOSE = "";
@@ -215,8 +219,10 @@ function isRequest(sentence: string): boolean {
 }
 
 export function askedQuestion(text: string): string | null {
+  if (SYSTEM_REPLY_TAG.test(text.trim())) return null;
   const held: string[] = [];
   const sentences = proseLines(text, held).flatMap((l) => l.split(/(?<=[.!?][*_"'`)\]]*)\s+/).filter(Boolean));
+  if (sentences.some((s) => RHETORICAL_SCOLDING.test(s))) return null;
   const found = sentences.filter((s, i) => {
     if (isRequest(s)) return false;
     const edge = i === 0 || i === sentences.length - 1;
@@ -269,6 +275,14 @@ export function classifyEventAll(e: EpisodicEvent): Seek[] {
       .filter((s): s is Seek => s !== null);
   }
   const meta = parseMeta(e.metadataJson);
+  if (
+    (e.source === "codex_session" || e.source === "antigravity_session") &&
+    meta.kind === "tool_command"
+  ) {
+    return splitCommands(e.contentText)
+      .map(classifyCommand)
+      .filter((s): s is Seek => s !== null);
+  }
   if (e.source === "chrome" && meta.kind === "search") return [{ kind: "WEB_SEARCH", query: e.contentText }];
   if (e.source === "chrome" && meta.kind === "visit") {
     const q = docsSiteQuery(e.sourceUri, e.contentText);
