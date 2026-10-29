@@ -168,6 +168,9 @@ function firstPositional(args: string[], valueOpts: Set<string>): string | undef
 // starts with a question word. Requests phrased as questions ("can you fix X?") are not
 // seeking. Returns the question sentences (the search query), or null.
 const REQUEST = /^(can|could|would|will) you\b|^please\b/i;
+// Discourse openers ("Also, can you ...", "Then could you ...") come off before the
+// request and question-word tests.
+const OPENER = /^(?:(?:also|and|then|so|ok|okay|now|but|hey|btw|next|finally|lastly)\b[,:]?\s*)+/i;
 const QUESTION_START = /^(what|how|why|where|when|which|who|whose|is|are|does|do(?! not\b)|did|should|has|have)\b/i;
 const QUESTION_END = /[\p{L}\p{N}"'`]\?+$/u;
 
@@ -185,9 +188,11 @@ export function askedQuestion(text: string): string | null {
     const text = line.replace(/^(?:(?:[-*+]|\d+[.)]|>)\s*)+/, "");
     sentences.push(...text.split(/(?<=[.!?])\s+/).filter(Boolean));
   }
-  const found = sentences.filter(
-    (s, i) => !REQUEST.test(s) && (QUESTION_END.test(s) || ((i === 0 || i === sentences.length - 1) && QUESTION_START.test(s))),
-  );
+  const found = sentences.filter((s, i) => {
+    const core = s.replace(OPENER, "");
+    if (REQUEST.test(core)) return false;
+    return QUESTION_END.test(s) || ((i === 0 || i === sentences.length - 1) && QUESTION_START.test(core));
+  });
   return found.length > 0 ? found.join(" ").slice(0, 500) : null;
 }
 

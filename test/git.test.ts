@@ -53,7 +53,7 @@ test("git: log is parsed with exact commit times; truncation is flagged", () => 
   const r = readGitRepo(repo, 100);
   assert.equal(r.counts.parsed, 2);
   const byTime = [...r.events].sort((a, b) => a.timestampMs - b.timestampMs);
-  assert.equal(byTime[0]!.timestampMs, Date.UTC(2026, 0, 2, 3, 4, 5));
+  assert.equal(byTime[0]!.timestampMs, Date.UTC(2026, 0, 2, 3, 4, 5) + 999);
   assert.equal(byTime[1]!.contentText, "Drop --jitless\nUse --wasm-tier-up=false instead.");
   assert.match(byTime[1]!.sourceUri, new RegExp(`^git:${repo}@[0-9a-f]{40}$`));
   assert.equal(JSON.parse(byTime[1]!.metadataJson).author, "Owner");
@@ -78,7 +78,7 @@ test("git: a rebased commit with an old author date is not back-dated", () => {
   const repo = join(tmp(), "proj");
   initRepo(repo, [{ msg: "Cherry-picked fix", authorDate: "2025-01-01T00:00:00Z", date: "2026-03-04T05:06:07Z" }]);
   const r = readGitRepo(repo, 10);
-  assert.equal(r.events[0]!.timestampMs, Date.UTC(2026, 2, 4, 5, 6, 7));
+  assert.equal(r.events[0]!.timestampMs, Date.UTC(2026, 2, 4, 5, 6, 7) + 999);
 });
 
 const ENV = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" };
@@ -111,9 +111,9 @@ test("git: fetched commits are dated when they arrived here, not when upstream c
 
   const r = readGitRepo(mine, 100);
   const byText = new Map(r.events.map((e) => [e.contentText, e]));
-  assert.equal(byText.get("upstream: old fix")!.timestampMs, Date.UTC(2026, 4, 1));
-  assert.equal(byText.get("upstream: second fix")!.timestampMs, Date.UTC(2026, 5, 1));
-  assert.equal(byText.get("mine: local work")!.timestampMs, Date.UTC(2026, 6, 1));
+  assert.equal(byText.get("upstream: old fix")!.timestampMs, Date.UTC(2026, 4, 1) + 999);
+  assert.equal(byText.get("upstream: second fix")!.timestampMs, Date.UTC(2026, 5, 1) + 999);
+  assert.equal(byText.get("mine: local work")!.timestampMs, Date.UTC(2026, 6, 1) + 999);
   assert.deepEqual(JSON.parse(byText.get("upstream: second fix")!.metadataJson), {
     author: "Other",
     committed_ms: Date.UTC(2001, 5, 1),
@@ -151,14 +151,14 @@ test("git: reflog lines are parsed and sorted by time; a commit with no reflog t
     [`${sha("b")}\u001fHEAD@{200}`, `${sha("a")}\u001frefs/heads/main@{100}`, "garbage", `${sha("c")}\u001fHEAD@{not-a-time}`].join("\n"),
   );
   assert.deepEqual(reflog, [
-    { sha: sha("a"), atMs: 100_000 },
-    { sha: sha("b"), atMs: 200_000 },
+    { sha: sha("a"), atMs: 100_999 },
+    { sha: sha("b"), atMs: 200_999 },
   ]);
   const rec = (s: string, committer: string) => `${s}\u001f\u001f50\u001f${committer}\u001fA\u001fsubject ${committer}\u001f\u001e`;
   const r = parseGitLog(rec(sha("d"), "Owner@Example.com") + rec(sha("e"), "other@example.com"), "/r", [], "owner@example.com");
   assert.deepEqual(
     r.events.map((e) => [e.contentText, e.timestampMs, JSON.parse(e.metadataJson).time_from]),
-    [["subject Owner@Example.com", 50_000, "committer"]],
+    [["subject Owner@Example.com", 50_999, "committer"]],
   );
   assert.equal(r.counts.skipped.no_local_time, 1);
 });
@@ -199,4 +199,12 @@ test("git: a committer time later than local arrival does not postpone the commi
   const r = parseGitLog(rec, "/r", [{ sha, atMs: 100_000 }], "owner@example.com");
   assert.equal(r.events[0]!.timestampMs, 100_000);
   assert.equal(JSON.parse(r.events[0]!.metadataJson).committed_ms, 500_000);
+});
+
+test("git: whole-second times are dated at the end of their second", () => {
+  // A fetch logged at second 100 may have happened at 100.9; a seek at 100.5 must not see it.
+  const sha = "e".repeat(40);
+  const [entry] = parseReflog(`${sha}\u001fHEAD@{100}`);
+  assert.equal(entry!.atMs, 100_999);
+  assert.ok(!(entry!.atMs < 100_500));
 });

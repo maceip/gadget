@@ -130,3 +130,11 @@ test("ASK_AGENT: list and quote markers do not hide a request or a question", ()
   assert.equal(askedQuestion("> why does the wasm build reject --jitless?"), "why does the wasm build reject --jitless?");
   assert.equal(askedQuestion("- what sets the tier-up flag"), "what sets the tier-up flag");
 });
+
+test("ASK_AGENT: requests after an opener are still requests; questions after one are still questions", () => {
+  assert.equal(isQuestion("E1 failed\nAlso, can you fix this?"), false);
+  assert.equal(isQuestion("Then could you update the build?"), false);
+  assert.equal(isQuestion("ok so please rerun it?"), false);
+  assert.equal(askedQuestion("So what sets the tier-up flag"), "So what sets the tier-up flag");
+  assert.equal(askedQuestion("Also, which file sets the flag?"), "Also, which file sets the flag?");
+});

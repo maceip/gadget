@@ -45,6 +45,13 @@ export interface ReflogEntry {
   atMs: number;
 }
 
+// Git records whole seconds. Something logged at second S happened somewhere in
+// [S, S+1), so it is dated at the end of that second: a millisecond-resolution seek
+// earlier in the same second must not see it.
+export function endOfSecondMs(seconds: number): number {
+  return seconds * 1000 + 999;
+}
+
 // `git log -g` prints each ref's entries newest first; they are reversed before the
 // (stable) sort so entries within the same second stay in the order they happened.
 export function parseReflog(output: string): ReflogEntry[] {
@@ -52,7 +59,7 @@ export function parseReflog(output: string): ReflogEntry[] {
   for (const line of output.split("\n").reverse()) {
     const [sha, selector] = line.split(FIELD);
     const at = /@\{(\d+)\}$/.exec(selector ?? "");
-    if (sha && /^[0-9a-f]{40}$/.test(sha) && at) entries.push({ sha, atMs: Number(at[1]) * 1000 });
+    if (sha && /^[0-9a-f]{40}$/.test(sha) && at) entries.push({ sha, atMs: endOfSecondMs(Number(at[1])) });
   }
   return entries.sort((a, b) => a.atMs - b.atMs);
 }
@@ -116,7 +123,7 @@ export function parseGitLog(output: string, repo: string, reflog: ReflogEntry[] 
         // The reflog time is this machine's clock at arrival. A later committer time
         // comes from another clock (skew or a future-dated commit) and is kept only as
         // metadata.
-        timestampMs: reflogMs ?? r.committedMs,
+        timestampMs: reflogMs ?? endOfSecondMs(r.committedMs / 1000),
         workspacePath: repo,
         contentText: r.text,
         sourceUri: `git:${repo}@${r.sha}`,
