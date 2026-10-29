@@ -43,13 +43,22 @@ export function ftsMatch(tokens: string[]): string {
   return tokens.map((t) => `"${t.replace(/"/g, '""')}"`).join(" AND ");
 }
 
+export interface ActionHits {
+  kind: SeekKind;
+  query: string;
+  keyTokens: string[];
+  hit: Hit | null; // best non-seek match strictly before seekStartMs
+  hitOlderThanDay: Hit | null; // best match older than one day before seekStartMs
+}
+
 export interface EpisodeEval {
   episodeId: string;
   usableQuery: boolean; // has a normalized query of 3+ chars
   repeatSeek: boolean;
   keyTokens: string[];
-  hit: Hit | null; // best non-seek match strictly before seekStartMs
-  hitOlderThanDay: Hit | null; // best match older than one day before seekStartMs
+  actions: ActionHits[]; // one per seek action that has key tokens
+  hit: Hit | null; // first action's hit, if any action hit
+  hitOlderThanDay: Hit | null;
 }
 
 export interface Rate {
@@ -81,27 +90,34 @@ export function evaluateCeiling(episodes: SeekingEpisode[], store: EventStore): 
       if (repeat) repeatSeek.num++;
     }
 
-    // Each seek action is its own query (all of its tokens must match); the episode has a
-    // local hit if any action does. Different actions in one episode are often different
-    // phrasings ("rg -- --jitless", then a web search for "v8 jitless").
-    const perAction = ep.seekActions.map((a) => keyTokens(a.query, a.kind)).filter((t) => t.length > 0);
-    const tokens = [...new Set(perAction.flat())];
-    let hit: Hit | null = null;
-    let hitOld: Hit | null = null;
-    if (perAction.length > 0) {
-      for (const t of perAction) {
-        const match = ftsMatch(t);
-        hit ??= store.searchBefore(match, ep.seekStartMs)[0] ?? null;
-        hitOld ??= store.searchBefore(match, ep.seekStartMs - DAY_MS)[0] ?? null;
-        if (hit && hitOld) break;
-      }
+    // Each seek action is its own query (all of its tokens must match), and every action is
+    // evaluated: different actions in one episode are often different phrasings ("rg --
+    // --jitless", then a web search for "v8 jitless"), and a later, more specific one may
+    // find what an earlier one did not. The episode has a local hit if any action does.
+    const actions: ActionHits[] = [];
+    for (const a of ep.seekActions) {
+      const t = keyTokens(a.query, a.kind);
+      if (t.length === 0) continue;
+      const match = ftsMatch(t);
+      actions.push({
+        kind: a.kind,
+        query: a.query,
+        keyTokens: t,
+        hit: store.searchBefore(match, ep.seekStartMs)[0] ?? null,
+        hitOlderThanDay: store.searchBefore(match, ep.seekStartMs - DAY_MS)[0] ?? null,
+      });
+    }
+    const tokens = [...new Set(actions.flatMap((a) => a.keyTokens))];
+    const hit = actions.find((a) => a.hit)?.hit ?? null;
+    const hitOld = actions.find((a) => a.hitOlderThanDay)?.hitOlderThanDay ?? null;
+    if (actions.length > 0) {
       localHit.den++;
       localHitOlderThanDay.den++;
       if (hit) localHit.num++;
       if (hitOld) localHitOlderThanDay.num++;
     }
 
-    evals.push({ episodeId: ep.episodeId, usableQuery, repeatSeek: repeat, keyTokens: tokens, hit, hitOlderThanDay: hitOld });
+    evals.push({ episodeId: ep.episodeId, usableQuery, repeatSeek: repeat, keyTokens: tokens, actions, hit, hitOlderThanDay: hitOld });
     for (const q of queries) seen.add(q);
   }
   return { evals, repeatSeek, localHit, localHitOlderThanDay };

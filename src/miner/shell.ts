@@ -25,8 +25,11 @@ export function tokenize(line: string): Token[] {
     if (c === "\\") {
       if (i + 1 < line.length) {
         const next = line[++i]!;
-        if (next !== "\n") word += next;
-        inWord = true;
+        // backslash-newline continues the line and produces nothing
+        if (next !== "\n") {
+          word += next;
+          inWord = true;
+        }
       }
       continue;
     }

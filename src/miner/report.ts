@@ -156,8 +156,12 @@ export function renderReport(input: ReportInput): { markdown: string; csv: strin
     for (const e of ctx) out.push(`- ${clock(e.timestampMs)} ${e.source}: ${code(e.contentText)}`);
     out.push("");
     out.push(`Key tokens: ${ev && ev.keyTokens.length ? ev.keyTokens.map(code).join(" ") : "(none)"}`);
-    out.push(`Top local hit: ${hitLine(ev?.hit ?? null, ep.seekStartMs)}`);
-    out.push(`Top local hit older than one day: ${hitLine(ev?.hitOlderThanDay ?? null, ep.seekStartMs)}`);
+    if (!ev || ev.actions.length === 0) out.push("Top local hit: none (no key tokens)");
+    for (const a of ev?.actions ?? []) {
+      const label = ev!.actions.length > 1 ? ` for ${code(a.query)}` : "";
+      out.push(`Top local hit${label}: ${hitLine(a.hit, ep.seekStartMs)}`);
+      out.push(`Top local hit${label}, older than one day: ${hitLine(a.hitOlderThanDay, ep.seekStartMs)}`);
+    }
     out.push(`Repeat seek: ${ev?.repeatSeek ? "yes" : "no"}`);
     out.push(
       `Resolution: ${ep.resolution ? `${ep.resolution.kind} after ${(ep.costMs! / 60000).toFixed(1)} min` : "none within the window"}`,

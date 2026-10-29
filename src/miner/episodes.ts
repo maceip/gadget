@@ -82,13 +82,28 @@ function findResolution(
       if (key) failed.add(key);
     }
   };
+  const deadline = lastSeekMs + p.resolutionWindowMs;
+  const success = (e: StoredEvent, atMs: number): NonNullable<SeekingEpisode["resolution"]> => ({
+    kind: TEST_COMMAND.test(e.contentText) ? "TEST_PASSED" : "COMMAND_SUCCEEDED",
+    sourceUri: e.sourceUri,
+    atMs,
+  });
+
+  // Exit-code state changes take effect when a command finishes. A success that finished
+  // before seeking ended clears its failure; one that started earlier but finished after
+  // the last seek (a long test run while searching) is a resolution candidate.
+  let spanning: SeekingEpisode["resolution"];
   for (let i = contextStartIndex; i <= lastSeekIndex; i++) {
     const e = events[i]!;
     noteFailure(e);
-    if (e.source === "zsh_hook" && exitCode(e) === 0) failed.delete(commandKey(e) ?? "");
+    if (e.source !== "zsh_hook" || exitCode(e) !== 0) continue;
+    const key = commandKey(e) ?? "";
+    const endMs = endTime(e);
+    if (endMs <= lastSeekMs) failed.delete(key);
+    else if (failed.has(key) && endMs <= deadline && (!spanning || endMs < spanning.atMs)) spanning = success(e, endMs);
   }
 
-  const deadline = lastSeekMs + p.resolutionWindowMs;
+  let after: SeekingEpisode["resolution"];
   let firstWork: StoredEvent | undefined;
   for (let i = lastSeekIndex + 1; i < events.length; i++) {
     const e = events[i]!;
@@ -97,15 +112,15 @@ function findResolution(
       // A success is known when the command finishes, not when it starts.
       const endMs = endTime(e);
       if (endMs > deadline) continue;
-      return {
-        kind: TEST_COMMAND.test(e.contentText) ? "TEST_PASSED" : "COMMAND_SUCCEEDED",
-        sourceUri: e.sourceUri,
-        atMs: endMs,
-      };
+      after = success(e, endMs);
+      break;
     }
     noteFailure(e);
     if (!firstWork && isBackfillWorkEvent(e)) firstWork = e;
   }
+
+  const exitResolution = [spanning, after].filter((r) => r !== undefined).sort((a, b) => a.atMs - b.atMs)[0];
+  if (exitResolution) return exitResolution;
   return firstWork ? { kind: "WORK_RESUMED", sourceUri: firstWork.sourceUri, atMs: firstWork.timestampMs } : undefined;
 }
 

@@ -134,6 +134,54 @@ test("episodes: a failure already fixed before seeking is not resolved again by 
   assert.equal(eps[0]!.resolution, undefined);
 });
 
+test("episodes: a retry that starts before the search and finishes after it resolves the episode", () => {
+  const eps = buildEpisodes(
+    [
+      ev("zsh_hook", T0, "npm test", { exit: 1, end_ms: T0 + 1000 }),
+      ev("zsh_hook", T0 + MIN, "npm test", { exit: 0, end_ms: T0 + 6 * MIN }),
+      ev("zsh_hook", T0 + 2 * MIN, "rg tierUp", { exit: 0, end_ms: T0 + 2 * MIN }),
+    ].map(stored),
+    params,
+  );
+  assert.equal(eps[0]!.resolution?.kind, "TEST_PASSED");
+  assert.equal(eps[0]!.resolution?.atMs, T0 + 6 * MIN);
+  assert.equal(eps[0]!.costMs, 4 * MIN);
+});
+
+test("ceiling: every seek action gets its own top hit", () => {
+  const store = storeWith([
+    ev("git", T0 - DAY, "build cache notes"),
+    ev("git", T0 - DAY, "frobnicator lives in src/frob.ts"),
+    ev("zsh", T0, "rg build; rg frobnicator"),
+  ]);
+  const c = evaluateCeiling(buildEpisodes(store.allEventsSorted(), params), store);
+  const actions = c.evals[0]!.actions;
+  assert.deepEqual(
+    actions.map((a) => [a.query, a.hit?.snippet]),
+    [
+      ["build", "[build] cache notes"],
+      ["frobnicator", "[frobnicator] lives in src/frob.ts"],
+    ],
+  );
+  store.close();
+});
+
+test("store: events with the same timestamp keep insertion order, not id order", () => {
+  // Find two events whose content-addressed ids sort opposite to insertion order.
+  let a = ev("zsh", T0, "rg first0");
+  let b = ev("zsh", T0, "vim after0");
+  for (let i = 1; a.eventId < b.eventId; i++) {
+    a = ev("zsh", T0, `rg first${i}`);
+    b = ev("zsh", T0, `vim after${i}`);
+  }
+  const store = storeWith([a, b]);
+  assert.deepEqual(
+    store.allEventsSorted().map((e) => e.eventId),
+    [a.eventId, b.eventId],
+  );
+  store.close();
+});
+
 test("episodes: git commits are not evidence that the owner resumed work", () => {
   const eps = buildEpisodes([ev("zsh", T0, "rg tierUp"), ev("git", T0 + MIN, "Upstream: bump deps")].map(stored), params);
   assert.equal(eps[0]!.resolution, undefined);

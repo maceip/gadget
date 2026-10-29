@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, renameSync, rmSync, mkdirSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, renameSync, rmSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { MinerConfig } from "./config.js";
 import { parseChromeHistory, findChromiumHistoryFiles } from "./parsers/chrome.js";
@@ -32,6 +32,8 @@ export function ingest(cfg: MinerConfig): IngestSummary {
   const tmp = cfg.dbPath + ".building";
   rmSync(tmp, { force: true });
   const store = new EventStore(tmp);
+  // The store aggregates private history; keep it owner-only whatever the umask or parent.
+  chmodSync(tmp, 0o600);
   const rows: IngestRow[] = [];
   let inserted = 0;
   let seeks = 0;

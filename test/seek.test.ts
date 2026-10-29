@@ -61,6 +61,7 @@ const CASES: Array<[string, string | null, string?]> = [
   ["docker ps | grep api", null],
   ["kubectl get pods | grep api", null],
   ["brew list | grep node", null],
+  ["rg \\\n  needle", "GREP", "needle"],
 ];
 
 for (const [cmd, kind, query] of CASES) {

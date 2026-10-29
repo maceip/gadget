@@ -116,13 +116,15 @@ export class EventStore {
     return rows.map((r) => ({ source: r.source, label: r.label, counts: JSON.parse(r.counts_json) as ParseCounts }));
   }
 
+  // Time order; events with the same timestamp keep insertion order (rowid), which is the
+  // order of the source file (e.g. several zsh history entries within one second).
   allEventsSorted(): StoredEvent[] {
     const rows = this.db
       .prepare(
         `SELECT event_id, source, timestamp_ms, workspace_path,
                 CASE WHEN source IN ('zsh', 'zsh_hook') THEN content_text ELSE substr(content_text, 1, 200) END AS content_text,
                 source_uri, metadata_json, seeks_json
-           FROM events ORDER BY timestamp_ms, event_id`,
+           FROM events ORDER BY timestamp_ms, rowid`,
       )
       .all() as Array<Record<string, unknown>>;
     return rows.map((r) => ({

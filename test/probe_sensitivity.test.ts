@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { evaluateCeiling } from "../src/miner/ceiling.js";
 import { defaultConfig } from "../src/miner/config.js";
 import { buildEpisodes } from "../src/miner/episodes.js";
+import { ingest } from "../src/miner/ingest.js";
 import { probe } from "../src/miner/probe.js";
 import { renderReport, writeReport } from "../src/miner/report.js";
 import { withSeeks } from "../src/miner/seek.js";
@@ -89,4 +90,19 @@ test("report: an --out path that reaches the repo through a symlink is refused",
     generatedAt: new Date(T0),
   };
   assert.throws(() => writeReport(input, join(link, "reports", "new")), /refusing to write a report inside the repo/);
+});
+
+test("ingest: the store is owner-only even in a permissive directory", () => {
+  const home = tmp();
+  const dir = join(home, "shared");
+  mkdirSync(dir);
+  chmodSync(dir, 0o755);
+  const cfg = { ...defaultConfig(home), dbPath: join(dir, "miner.db"), gitRoots: [join(home, "none")] };
+  const before = process.umask(0o022);
+  try {
+    ingest(cfg);
+  } finally {
+    process.umask(before);
+  }
+  assert.equal(statSync(cfg.dbPath).mode & 0o777, 0o600);
 });

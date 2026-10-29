@@ -30,6 +30,8 @@ function flag(args: string[], name: string): string | undefined {
 
 function main(argv: string[]): number {
   checkNode();
+  // Everything this tool writes (store, journals, reports) holds private data.
+  process.umask(0o077);
   const [cmd, ...args] = argv;
   const cfg = loadConfig();
 
