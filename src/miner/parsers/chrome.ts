@@ -1,0 +1,121 @@
+import { copyFileSync, existsSync, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { makeEvent } from "../event.js";
+import { bump, emptyCounts, type EpisodicEvent, type ParseResult } from "../types.js";
+
+// Chrome stores times as microseconds since 1601-01-01 UTC.
+export const CHROME_EPOCH_OFFSET_MS = 11644473600000;
+
+// Returns every <root>/<profile>/History file under the given Chromium user-data roots.
+export function findChromiumHistoryFiles(roots: string[]): string[] {
+  const found: string[] = [];
+  for (const root of roots) {
+    if (!existsSync(root)) continue;
+    for (const name of readdirSync(root)) {
+      const p = join(root, name, "History");
+      try {
+        if (statSync(p).isFile()) found.push(p);
+      } catch {
+        // not a profile
+      }
+    }
+  }
+  return found.sort();
+}
+
+// Reads one History file. The file is copied first (Chrome keeps it locked) and the
+// copy is opened read-only. Search terms become WEB_SEARCH candidates; visits to the
+// search-results pages themselves are skipped so they are not double counted.
+export function parseChromeHistory(historyPath: string): ParseResult {
+  const counts = emptyCounts();
+  const events: EpisodicEvent[] = [];
+  const dir = mkdtempSync(join(tmpdir(), "gadget-chrome-"));
+  try {
+    const copy = join(dir, "History");
+    copyFileSync(historyPath, copy);
+    for (const suffix of ["-wal", "-journal"]) {
+      if (existsSync(historyPath + suffix)) copyFileSync(historyPath + suffix, copy + suffix);
+    }
+    const db = new DatabaseSync(copy, { readOnly: true });
+    try {
+      const tables = new Set(
+        (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map(
+          (r) => r.name,
+        ),
+      );
+      for (const t of ["urls", "visits"]) {
+        if (!tables.has(t)) bump(counts.unknown, `missing_table:${t}`);
+      }
+      if (!tables.has("urls") || !tables.has("visits")) return { events, counts };
+
+      const searchUrlIds = new Set<number>();
+      if (tables.has("keyword_search_terms")) {
+        const rows = db
+          .prepare(
+            `SELECT k.term AS term, k.url_id AS url_id, v.id AS visit_id, u.url AS url,
+                    (v.visit_time / 1000) - ${CHROME_EPOCH_OFFSET_MS} AS ts_ms
+               FROM keyword_search_terms k
+               JOIN visits v ON v.url = k.url_id
+               JOIN urls u ON u.id = k.url_id`,
+          )
+          .all() as Array<{ term: string; url_id: number; visit_id: number; url: string; ts_ms: number }>;
+        for (const r of rows) {
+          counts.read++;
+          searchUrlIds.add(r.url_id);
+          if (r.ts_ms <= 0) {
+            bump(counts.skipped, "no_timestamp");
+            continue;
+          }
+          events.push(
+            makeEvent({
+              source: "chrome",
+              timestampMs: r.ts_ms,
+              contentText: r.term,
+              sourceUri: r.url,
+              metadataJson: JSON.stringify({ kind: "search", history: historyPath, visit_id: r.visit_id }),
+            }),
+          );
+          counts.parsed++;
+        }
+      } else {
+        bump(counts.unknown, "missing_table:keyword_search_terms");
+      }
+
+      const visits = db
+        .prepare(
+          `SELECT v.id AS visit_id, u.id AS url_id, u.url AS url, u.title AS title,
+                  (v.visit_time / 1000) - ${CHROME_EPOCH_OFFSET_MS} AS ts_ms
+             FROM visits v JOIN urls u ON u.id = v.url`,
+        )
+        .all() as Array<{ visit_id: number; url_id: number; url: string; title: string | null; ts_ms: number }>;
+      for (const r of visits) {
+        counts.read++;
+        if (searchUrlIds.has(r.url_id)) {
+          bump(counts.skipped, "search_results_page");
+          continue;
+        }
+        if (r.ts_ms <= 0) {
+          bump(counts.skipped, "no_timestamp");
+          continue;
+        }
+        events.push(
+          makeEvent({
+            source: "chrome",
+            timestampMs: r.ts_ms,
+            contentText: `${r.title ?? ""}\n${r.url}`.trim(),
+            sourceUri: r.url,
+            metadataJson: JSON.stringify({ kind: "visit", history: historyPath, visit_id: r.visit_id }),
+          }),
+        );
+        counts.parsed++;
+      }
+    } finally {
+      db.close();
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  return { events, counts };
+}

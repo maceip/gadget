@@ -1,0 +1,22 @@
+{
+  "name": "gadget",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Ambient recall for one owner on one laptop. See AGENTS.md.",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "typecheck": "tsc -p . --noEmit",
+    "test": "tsc -p . && node --disable-warning=ExperimentalWarning --test \"dist/test/**/*.test.js\"",
+    "test:zsh": "bash test/zsh/run.sh",
+    "guards": "node scripts/guard_no_send.mjs && node scripts/guard_acceptance_manifest.mjs",
+    "mine": "tsc -p . && node --disable-warning=ExperimentalWarning dist/src/miner/cli.js"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "typescript": "5.9.3"
+  }
+}
