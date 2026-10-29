@@ -200,14 +200,17 @@ function proseLines(text: string, held: string[]): string[] {
   let afterBlank = true;
   let indentedCode = false;
   for (const raw of text.split("\n")) {
-    const indented = /^(?: {4}|\t)/.test(raw) && raw.trim() !== "";
+    // Block quote markers ("> ", each taking one optional space) come off first, so an
+    // indented block inside a quote is still code.
+    const body = raw.replace(/^ {0,3}(?:> ?)+/, "");
+    const indented = /^(?: {4}|\t)/.test(body) && body.trim() !== "";
     if (fence === null && indented && (afterBlank || indentedCode)) {
       indentedCode = true;
       continue;
     }
-    indentedCode = indentedCode && raw.trim() === "";
-    afterBlank = raw.trim() === "";
-    const line = raw.trim().replace(CONTAINER, "");
+    indentedCode = indentedCode && body.trim() === "";
+    afterBlank = body.trim() === "";
+    const line = body.trim().replace(CONTAINER, "");
     // A backtick fence's info string cannot contain a backtick (CommonMark), so
     // "```--jitless``` why ...?" is inline code, not a fence.
     const found = FENCE.exec(line)?.[1];

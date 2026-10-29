@@ -224,3 +224,9 @@ test("ASK_AGENT: a line opening with an inline ``` span is prose, not a fence", 
   assert.equal(askedQuestion("```--jitless``` breaks it.\nwhere is the flag set?"), "where is the flag set?");
   assert.equal(isQuestion("```ts\nwhy?\n```\nplease rerun it"), false);
 });
+
+test("ASK_AGENT: an indented code block inside a block quote is code", () => {
+  assert.equal(isQuestion("> Output:\n>\n>     why?\n>\n> Can you fix this?"), false);
+  assert.equal(askedQuestion("> Output:\n>\n>     x = 1\n>\n> why is x one?"), "why is x one?");
+  assert.equal(askedQuestion("> why does the wasm build fail?"), "why does the wasm build fail?");
+});
