@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import type { MinerConfig } from "./config.js";
 import { findAntigravityTranscripts, parseAntigravityTranscript } from "./parsers/antigravity.js";
 import { parseChromeCapture, parseChromeHistory, discoverChromiumHistoryFiles } from "./parsers/chrome.js";
+import { parseClipboardCapture } from "./parsers/clipboard.js";
 import { parseCodexSession } from "./parsers/codex.js";
 import { censusFiles, listFiles } from "./parsers/files.js";
 import { assertOutsideRepo } from "./paths.js";
@@ -83,6 +84,12 @@ export function ingest(cfg: MinerConfig): IngestSummary {
     if (hasChromeCapture) {
       const r = parseChromeCapture(readFileSync(chromeCapturePath, "utf8"), chromeCapturePath);
       add("chrome", chromeCapturePath, r.events, r.counts);
+    }
+
+    const clipboardCapturePath = join(dirname(cfg.zshHook), "clipboard.jsonl");
+    if (existsSync(clipboardCapturePath)) {
+      const r = parseClipboardCapture(readFileSync(clipboardCapturePath, "utf8"), clipboardCapturePath);
+      add("clipboard", clipboardCapturePath, r.events, r.counts);
     }
 
     const { files: histories, unreadableRoots } = discoverChromiumHistoryFiles(cfg.chromiumRoots);

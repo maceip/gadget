@@ -8,6 +8,12 @@
 // Offline and read-only on every source. Config overrides: ~/.gadget/config.json.
 
 import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { listAudioDevices, recordAudioClip } from "../media/audio_recorder.js";
+import { captureClipboardOnce } from "../media/clipboard.js";
+import { captureScreenAndOcr } from "../media/screen.js";
+import { transcribeAudio } from "../media/stt.js";
+import { listVoices, speakAloud, synthesizeSpeech } from "../media/tts.js";
 import { runStdioMcpServer } from "../mcp/server.js";
 import { formatReplayTable, runReplay } from "../runtime/replay.js";
 import { startWorkbenchServer } from "../web/server.js";
@@ -119,7 +125,100 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
 
-  console.error("usage: npm run mine -- ingest | report [--seed N] [--out DIR] | probe | replay | mcp | web [--port N]");
+  if (cmd === "tts") {
+    if (args.includes("--list-voices")) {
+      const voices = listVoices();
+      for (const v of voices) console.log(`${v.name}\t${v.locale}\t# ${v.sampleText}`);
+      return 0;
+    }
+    const outPath = flag(args, "--out");
+    const voice = flag(args, "--voice");
+    const rateArg = flag(args, "--rate");
+    const text = args.filter((a, i) => a !== "--out" && a !== "--voice" && a !== "--rate" && args[i - 1] !== "--out" && args[i - 1] !== "--voice" && args[i - 1] !== "--rate").join(" ").trim();
+    if (!text) {
+      console.error("usage: npm run mine -- tts <text> [--out file.wav] [--voice VoiceName] [--rate WPM] | --list-voices");
+      return 2;
+    }
+    if (outPath) {
+      const res = synthesizeSpeech({
+        text,
+        outputPath: outPath,
+        ...(voice ? { voice } : {}),
+        ...(rateArg ? { rateWpm: Number(rateArg) } : {}),
+      });
+      console.log(JSON.stringify(res));
+    } else {
+      speakAloud({
+        text,
+        ...(voice ? { voice } : {}),
+        ...(rateArg ? { rateWpm: Number(rateArg) } : {}),
+      });
+      console.log(JSON.stringify({ spoken: true, text }));
+    }
+    return 0;
+  }
+
+  if (cmd === "stt") {
+    const audioPath = args[0];
+    if (!audioPath) {
+      console.error("usage: npm run mine -- stt <audio.wav> [--model path/to/ggml.bin]");
+      return 2;
+    }
+    const modelPath = flag(args, "--model");
+    const captureJsonlPath = join(dirname(cfg.zshHook), "audio.jsonl");
+    const res = transcribeAudio({
+      audioPath,
+      ...(modelPath ? { modelPath } : {}),
+      captureJsonlPath,
+    });
+    console.log(JSON.stringify(res));
+    return 0;
+  }
+
+  if (cmd === "record-audio") {
+    if (args.includes("--list-devices")) {
+      console.log(JSON.stringify(listAudioDevices(), null, 2));
+      return 0;
+    }
+    const durationSec = Number(flag(args, "--duration") ?? args[0] ?? "5");
+    const outPath = flag(args, "--out");
+    const deviceIdx = flag(args, "--device");
+    const transcribe = !args.includes("--no-transcribe");
+    const captureJsonlPath = join(dirname(cfg.zshHook), "audio.jsonl");
+    const res = recordAudioClip({
+      durationSec,
+      ...(outPath ? { outputPath: outPath } : {}),
+      ...(deviceIdx !== undefined ? { audioDeviceIndex: Number(deviceIdx) } : {}),
+      transcribe,
+      captureJsonlPath,
+    });
+    console.log(JSON.stringify(res));
+    return 0;
+  }
+
+  if (cmd === "capture-screen") {
+    const outPath = flag(args, "--out");
+    const keepImage = args.includes("--keep") || Boolean(outPath);
+    const captureJsonlPath = join(dirname(cfg.zshHook), "screen.jsonl");
+    const res = captureScreenAndOcr({
+      ...(outPath ? { outputPath: outPath } : {}),
+      keepImage,
+      captureJsonlPath,
+    });
+    console.log(JSON.stringify(res));
+    return 0;
+  }
+
+  if (cmd === "capture-clipboard") {
+    const captureJsonlPath = join(dirname(cfg.zshHook), "clipboard.jsonl");
+    const res = captureClipboardOnce({ captureJsonlPath });
+    console.log(JSON.stringify(res));
+    return 0;
+  }
+
+  console.error(
+    "usage: npm run mine -- ingest | report [--seed N] [--out DIR] | probe | replay | mcp | web [--port N] | tts | stt | record-audio | capture-screen | capture-clipboard",
+  );
   return 2;
 }
 

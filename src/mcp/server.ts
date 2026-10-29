@@ -5,8 +5,9 @@
 
 import { createHash } from "node:crypto";
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
+import { pathToFileURL } from "node:url";
 import { loadConfig } from "../miner/config.js";
 import { assertOutsideRepo } from "../miner/paths.js";
 import { EventStore } from "../miner/store.js";
@@ -242,4 +243,8 @@ export async function runStdioMcpServer(): Promise<void> {
     }
   }
   store.close();
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  void runStdioMcpServer();
 }
