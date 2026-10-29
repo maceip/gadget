@@ -210,7 +210,10 @@ function proseLines(text: string, held: string[]): string[] {
     indentedCode = indentedCode && raw.trim() === "";
     afterBlank = raw.trim() === "";
     const line = raw.trim().replace(CONTAINER, "");
-    const marker = FENCE.exec(line)?.[1];
+    // A backtick fence's info string cannot contain a backtick (CommonMark), so
+    // "```--jitless``` why ...?" is inline code, not a fence.
+    const found = FENCE.exec(line)?.[1];
+    const marker = found && !(found[0] === "`" && line.slice(found.length).includes("`")) ? found : undefined;
     if (fence !== null) {
       if (marker && marker[0] === fence[0] && marker.length >= fence.length && line.slice(marker.length).trim() === "") fence = null;
       continue;

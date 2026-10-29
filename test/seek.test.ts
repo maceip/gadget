@@ -220,3 +220,9 @@ test("ASK_AGENT: indented code blocks are code; a scolding sentence does not dis
   );
   assert.equal(isQuestion("Did you lie? Did you actually run the tests?"), false);
 });
+
+test("ASK_AGENT: a line opening with an inline ``` span is prose, not a fence", () => {
+  assert.equal(askedQuestion("```--jitless``` why does this fail?"), "```--jitless``` why does this fail?");
+  assert.equal(askedQuestion("```--jitless``` breaks it.\nwhere is the flag set?"), "where is the flag set?");
+  assert.equal(isQuestion("```ts\nwhy?\n```\nplease rerun it"), false);
+});
