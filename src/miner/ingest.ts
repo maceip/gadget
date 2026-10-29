@@ -4,6 +4,7 @@ import type { MinerConfig } from "./config.js";
 import { parseChromeHistory, findChromiumHistoryFiles } from "./parsers/chrome.js";
 import { parseCodexSession } from "./parsers/codex.js";
 import { censusFiles, listFiles } from "./parsers/files.js";
+import { assertOutsideRepo } from "./paths.js";
 import { discoverRepos, readGitRepo } from "./parsers/git.js";
 import { parseZshHistory } from "./parsers/zsh_history.js";
 import { dedupeHistoryAgainstHook, parseZshHook } from "./parsers/zsh_hook.js";
@@ -28,6 +29,7 @@ export interface IngestSummary {
 // database is copied before opening. The store is written to a temp file and renamed
 // into place, so a failed run never leaves a half-built store.
 export function ingest(cfg: MinerConfig): IngestSummary {
+  assertOutsideRepo(cfg.dbPath, "the event store");
   mkdirSync(dirname(cfg.dbPath), { recursive: true, mode: 0o700 });
   const tmp = cfg.dbPath + ".building";
   rmSync(tmp, { force: true });

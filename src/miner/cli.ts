@@ -86,4 +86,5 @@ function main(argv: string[]): number {
   return 2;
 }
 
-process.exit(main(process.argv.slice(2)));
+// exitCode, not exit(): stdout to a pipe is asynchronous and must drain first.
+process.exitCode = main(process.argv.slice(2));

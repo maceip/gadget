@@ -1,6 +1,5 @@
 # Owner-only paths. Binding only with branch protection on main requiring code-owner review.
 /acceptance/ @maceip
-/scripts/guard_no_send.mjs @maceip
-/scripts/guard_acceptance_manifest.mjs @maceip
+/scripts/guard_* @maceip
 /.github/ @maceip
 /AGENTS.md @maceip

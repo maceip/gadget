@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { evaluateCeiling } from "../src/miner/ceiling.js";
 import { defaultConfig } from "../src/miner/config.js";
 import { buildEpisodes } from "../src/miner/episodes.js";
 import { ingest } from "../src/miner/ingest.js";
-import { probe } from "../src/miner/probe.js";
+import { probe, signature } from "../src/miner/probe.js";
 import { renderReport, writeReport } from "../src/miner/report.js";
 import { withSeeks } from "../src/miner/seek.js";
 import { computeSensitivity, sensitivityGrid } from "../src/miner/sensitivity.js";
@@ -105,4 +105,27 @@ test("ingest: the store is owner-only even in a permissive directory", () => {
     process.umask(before);
   }
   assert.equal(statSync(cfg.dbPath).mode & 0o777, 0o600);
+});
+
+test("probe: top-level JSON arrays show element shapes; oversized files are reported, not silently skipped", () => {
+  const sig = signature([{ role: "user", text: "secret words" }, { role: "assistant", text: "more" }, { tool: "x" }]);
+  assert.match(sig, /^array\[3\] of \{/);
+  assert.match(sig, /keys=\{role,text\}/);
+  assert.match(sig, /keys=\{tool\}/);
+  assert.doesNotMatch(sig, /secret|more/);
+
+  const home = tmp();
+  const dir = join(home, "brain");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "small.json"), JSON.stringify([{ a: 1 }]));
+  writeFileSync(join(dir, "big.json"), JSON.stringify([{ b: "x".repeat(5000) }]));
+  const out = probe({ ...defaultConfig(home), codexDir: join(home, "none"), antigravityDir: dir }, 1000);
+  assert.match(out, /\.json files: 2, 0 not JSON, 1 files over 1000 bytes skipped/);
+});
+
+test("ingest: refuses a store path inside the repo", () => {
+  const cfg = { ...defaultConfig(tmp()), dbPath: join(REPO, "miner-test-should-not-exist.db") };
+  assert.throws(() => ingest(cfg), /refusing to write the event store inside the repo/);
+  assert.equal(existsSync(cfg.dbPath), false);
+  assert.equal(existsSync(cfg.dbPath + ".building"), false);
 });

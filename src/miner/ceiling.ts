@@ -26,7 +26,9 @@ export function normalizeQuery(q: string): string {
 export function keyTokens(query: string, kind: SeekKind): string[] {
   const raw = (query.match(/[\p{L}\p{N}_-]+/gu) ?? []).map((t) => t.toLowerCase());
   const cleaned = raw
-    .map((t) => ({ t: t.replace(/^[-_]+|[-_]+$/g, ""), identifier: /[-_\d]/.test(t) }))
+    // identifier-like: compound (`wasm-tier-up`, `vitre_build`, `--jitless`) or letters
+    // mixed with digits (`v8`, `x86_64`); a plain number like `2026` is not.
+    .map((t) => ({ t: t.replace(/^[-_]+|[-_]+$/g, ""), identifier: /[-_]/.test(t) || (/\d/.test(t) && /\p{L}/u.test(t)) }))
     .filter(({ t }) => t.length >= 3 && !STOPWORDS.has(t));
   const seen = new Set<string>();
   const unique = cleaned.filter(({ t }) => (seen.has(t) ? false : (seen.add(t), true)));

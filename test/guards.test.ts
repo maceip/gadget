@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { REPO, tmp } from "./helpers.js";
@@ -87,6 +87,21 @@ test("guard_acceptance_manifest: passes when matching, fails on change, extra, o
 
   rmSync(join(root, "acceptance", "f1.json"));
   assert.match(run("guard_acceptance_manifest.mjs", root).stderr, /missing: f1\.json/);
+});
+
+test("CODEOWNERS covers every owner-only path that exists in the repo", () => {
+  const patterns = readFileSync(join(REPO, ".github", "CODEOWNERS"), "utf8")
+    .split("\n")
+    .filter((l) => l.trim() && !l.startsWith("#"))
+    .map((l) => l.split(/\s+/)[0]!.replace(/^\//, ""));
+  const covered = (path: string) =>
+    patterns.some((p) => (p.endsWith("*") ? path.startsWith(p.slice(0, -1)) : p.endsWith("/") ? path.startsWith(p) : path === p));
+  const owned = execFileSync("git", ["-C", REPO, "ls-files"], { encoding: "utf8" })
+    .split("\n")
+    .filter((f) => /^(acceptance\/|scripts\/guard_|\.github\/)/.test(f) || f === "AGENTS.md");
+  assert.ok(owned.length >= 5);
+  for (const f of owned) assert.ok(covered(f), `${f} is not covered by CODEOWNERS`);
+  assert.ok(covered("scripts/guard_future_check.mjs"), "a new guard file must be covered too");
 });
 
 test("guard_acceptance_manifest: the repo's own acceptance/ matches its manifest", () => {

@@ -60,10 +60,13 @@ export function dedupeHistoryAgainstHook(
     list.push(h.timestampMs);
     byCmd.set(h.contentText, list);
   }
+  // Each hook record can account for at most one history entry.
   let dropped = 0;
   const kept = history.filter((e) => {
     const times = byCmd.get(e.contentText);
-    if (times?.some((t) => t >= e.timestampMs - 1000 && t <= e.timestampMs + 2000)) {
+    const at = times?.findIndex((t) => t >= e.timestampMs - 1000 && t <= e.timestampMs + 2000) ?? -1;
+    if (at >= 0) {
+      times!.splice(at, 1);
       dropped++;
       return false;
     }

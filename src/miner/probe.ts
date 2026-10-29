@@ -33,8 +33,15 @@ function isObject(v: unknown): v is Record<string, unknown> {
 }
 
 // One line of JSON -> a structural signature with no content in it.
+// Arrays: the distinct shapes of up to ARRAY_SAMPLE elements (no values).
+const ARRAY_SAMPLE = 20;
+
 export function signature(o: unknown): string {
-  if (!isObject(o)) return Array.isArray(o) ? "array" : typeof o;
+  if (Array.isArray(o)) {
+    const shapes = [...new Set(o.slice(0, ARRAY_SAMPLE).map((x) => signature(x)))].sort();
+    return `array[${o.length}] of {${shapes.slice(0, 5).join(" | ")}${shapes.length > 5 ? " | ..." : ""}}`;
+  }
+  if (!isObject(o)) return typeof o;
   const parts = [`type=${label(o.type)}`, `keys={${keyList(o)}}`];
   if (isObject(o.payload)) {
     const p = o.payload;
@@ -74,7 +81,7 @@ function top(m: Map<string, number>, n: number): string[] {
     .map(([k, v]) => `  ${String(v).padStart(8)}  ${k}`);
 }
 
-function probeJsonl(files: string[], out: string[]): void {
+function probeJsonl(files: string[], out: string[], maxFileBytes: number): void {
   const sigs = new Map<string, number>();
   const tags = new Map<string, number>();
   const tagFiles = new Map<string, Set<string>>();
@@ -82,7 +89,7 @@ function probeJsonl(files: string[], out: string[]): void {
   let bad = 0;
   let skippedLarge = 0;
   for (const f of files) {
-    if (statSync(f).size > MAX_FILE_BYTES) {
+    if (statSync(f).size > maxFileBytes) {
       skippedLarge++;
       continue;
     }
@@ -106,7 +113,7 @@ function probeJsonl(files: string[], out: string[]): void {
       }
     }
   }
-  out.push(`  ${files.length} files, ${lines} lines, ${bad} not JSON, ${skippedLarge} files over 50 MB skipped`);
+  out.push(`  ${files.length} files, ${lines} lines, ${bad} not JSON, ${skippedLarge} files over ${maxFileBytes} bytes skipped`);
   out.push("  record signatures (count, signature):", ...top(sigs, 60));
   if (tags.size) {
     const filesWithUser = new Set([...tagFiles.values()].flatMap((fs) => [...fs])).size;
@@ -122,13 +129,13 @@ function probeJsonl(files: string[], out: string[]): void {
   }
 }
 
-export function probe(cfg: MinerConfig): string {
+export function probe(cfg: MinerConfig, maxFileBytes = MAX_FILE_BYTES): string {
   const out: string[] = ["gadget probe: structure only, no content", ""];
 
   out.push(`Codex sessions: ${cfg.codexDir}`);
   const codex = listFiles(cfg.codexDir, (p) => p.endsWith(".jsonl"));
   if (codex.length === 0) out.push("  not found or empty");
-  else probeJsonl(codex, out);
+  else probeJsonl(codex, out, maxFileBytes);
   out.push("");
 
   out.push(`Antigravity: ${cfg.antigravityDir}`);
@@ -142,13 +149,17 @@ export function probe(cfg: MinerConfig): string {
     const json = all.filter((p) => extname(p) === ".json");
     if (jsonl.length) {
       out.push("  .jsonl files:");
-      probeJsonl(jsonl, out);
+      probeJsonl(jsonl, out, maxFileBytes);
     }
     if (json.length) {
       const sigs = new Map<string, number>();
       let bad = 0;
+      let large = 0;
       for (const f of json) {
-        if (statSync(f).size > MAX_FILE_BYTES) continue;
+        if (statSync(f).size > maxFileBytes) {
+          large++;
+          continue;
+        }
         try {
           const s = signature(JSON.parse(readFileSync(f, "utf8")));
           sigs.set(s, (sigs.get(s) ?? 0) + 1);
@@ -156,7 +167,11 @@ export function probe(cfg: MinerConfig): string {
           bad++;
         }
       }
-      out.push(`  .json files: ${json.length}, ${bad} not JSON`, "  signatures (count, signature):", ...top(sigs, 30));
+      out.push(
+        `  .json files: ${json.length}, ${bad} not JSON, ${large} files over ${maxFileBytes} bytes skipped`,
+        "  signatures (count, signature):",
+        ...top(sigs, 30),
+      );
     }
   }
   return out.join("\n");

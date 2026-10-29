@@ -152,10 +152,14 @@ function isBackfillWorkEvent(e: StoredEvent): boolean {
 
 // Identifies "the same command" across a failure and a later success: the working
 // directory, the program, and its first non-option argument ("npm test" in /w, not
-// "npm install"). Flags may change between attempts and are ignored.
+// "npm install"). Flags may change between attempts and are ignored. A shell list or
+// pipeline (`npm test || true`, `npm test | tee log`) has one exit code for the whole
+// line, which cannot be attributed to any one command, so it gets no key.
 export function commandKey(e: StoredEvent): string | undefined {
-  const argv = splitCommands(e.contentText)[0]?.argv;
-  if (!argv?.[0]) return undefined;
+  const commands = splitCommands(e.contentText);
+  if (commands.length !== 1) return undefined;
+  const argv = commands[0]!.argv;
+  if (!argv[0]) return undefined;
   const sub = argv.slice(1).find((a) => !a.startsWith("-")) ?? "";
   return [e.workspacePath ?? "", argv[0], sub].join("\u0000");
 }

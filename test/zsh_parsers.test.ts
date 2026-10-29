@@ -65,6 +65,17 @@ test("zsh hook: valid lines parse, bad lines are counted", () => {
   assert.deepEqual(JSON.parse(e.metadataJson), { exit: 1, end_ms: 1790000000456 });
 });
 
+test("zsh hook: one hook record accounts for at most one history entry", () => {
+  const hook = parseZshHook(
+    JSON.stringify({ v: 1, start_ms: 1790000000400, end_ms: 1790000000500, cwd: "/w", cmd: "rg foo", exit: 0 }),
+    "hook",
+  ).events;
+  const hist = parseZshHistory(Buffer.from(": 1790000000:0;rg foo\n: 1790000000:0;rg foo\n"), "h").events;
+  const { kept, dropped } = dedupeHistoryAgainstHook(hist, hook);
+  assert.equal(dropped, 1);
+  assert.equal(kept.length, 1);
+});
+
 test("zsh hook: history entries also recorded by the hook are dropped", () => {
   const hook = parseZshHook(
     JSON.stringify({ v: 1, start_ms: 1790000000400, end_ms: 1790000001000, cwd: "/w", cmd: "rg foo", exit: 0 }),

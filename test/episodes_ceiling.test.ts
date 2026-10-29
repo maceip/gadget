@@ -225,6 +225,20 @@ test("store: two records alike except for metadata (e.g. two Chrome profiles) ar
   store.close();
 });
 
+test("episodes: a shell list or pipeline has no attributable exit code", () => {
+  for (const retry of ["npm test || true", "npm test; echo done", "npm test | tee log.txt"]) {
+    const eps = buildEpisodes(
+      [
+        ev("zsh_hook", T0, "npm test", { exit: 1, end_ms: T0 }),
+        ev("zsh_hook", T0 + MIN, "rg tierUp", { exit: 0, end_ms: T0 + MIN }),
+        ev("zsh_hook", T0 + 2 * MIN, retry, { exit: 0, end_ms: T0 + 2 * MIN }),
+      ].map(stored),
+      params,
+    );
+    assert.equal(eps[0]!.resolution, undefined, retry);
+  }
+});
+
 test("episodes: git commits are not evidence that the owner resumed work", () => {
   const eps = buildEpisodes([ev("zsh", T0, "rg tierUp"), ev("git", T0 + MIN, "Upstream: bump deps")].map(stored), params);
   assert.equal(eps[0]!.resolution, undefined);
@@ -255,6 +269,9 @@ test("ceiling: query normalization and key tokens", () => {
   assert.deepEqual(keyTokens("wasm-tier-up", "GREP"), ["wasm-tier-up"]);
   assert.deepEqual(keyTokens("foo.*bar", "GREP"), ["foo", "bar"]);
   assert.deepEqual(keyTokens("how do I turn off wasm_tier_up in the build?", "ASK_AGENT"), ["wasm_tier_up"]);
+  // A plain number is not an identifier and must not crowd out the real term.
+  assert.ok(keyTokens("What changed in 2026 for frobnicator?", "ASK_AGENT").includes("frobnicator"));
+  assert.deepEqual(keyTokens("why does x86_64 fail in 2026?", "ASK_AGENT"), ["x86_64"]);
   assert.equal(ftsMatch(['say"hi', "x"]), '"say""hi" AND "x"');
 });
 

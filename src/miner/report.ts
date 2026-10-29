@@ -1,34 +1,14 @@
-import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, relative, resolve, isAbsolute } from "node:path";
-import { fileURLToPath } from "node:url";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { DAY_MS, type CeilingResult, type EpisodeEval, type Rate } from "./ceiling.js";
 import type { MinerConfig } from "./config.js";
 import { MINER_VERSION } from "./event.js";
+import { assertOutsideRepo } from "./paths.js";
 import type { SensitivityRow } from "./sensitivity.js";
 import type { StoredEvent } from "./store.js";
 import type { ParseCounts, SeekingEpisode } from "./types.js";
 
-// dist/src/miner/report.js -> repo root
-export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-
-export function isInside(child: string, parent: string): boolean {
-  const rel = relative(resolve(parent), resolve(child));
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
-}
-
-// Resolves symlinks in the longest existing prefix of p, so a path that does not exist
-// yet still compares by where it would really be written.
-export function realResolve(p: string): string {
-  let cur = resolve(p);
-  const tail: string[] = [];
-  while (!existsSync(cur)) {
-    const parent = dirname(cur);
-    if (parent === cur) break;
-    tail.unshift(basename(cur));
-    cur = parent;
-  }
-  return join(existsSync(cur) ? realpathSync(cur) : cur, ...tail);
-}
+export { isInside, realResolve, REPO_ROOT } from "./paths.js";
 
 // Deterministic PRNG so a sample can be reproduced from its seed.
 export function mulberry32(seed: number): () => number {
@@ -177,9 +157,7 @@ export function renderReport(input: ReportInput): { markdown: string; csv: strin
 export function writeReport(input: ReportInput, outDirOverride?: string): { dir: string; reportPath: string; labelsPath: string } {
   const stamp = input.generatedAt.toISOString().replace(/[:.]/g, "-");
   const dir = resolve(outDirOverride ?? join(input.cfg.reportsDir, stamp));
-  if (isInside(realResolve(dir), realResolve(REPO_ROOT))) {
-    throw new Error(`refusing to write a report inside the repo (${dir}); reports contain private data`);
-  }
+  assertOutsideRepo(dir, "a report");
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const { markdown, csv } = renderReport(input);
   const reportPath = join(dir, "report.md");
