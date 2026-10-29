@@ -161,12 +161,35 @@ function firstPositional(args: string[], valueOpts: Set<string>): string | undef
   return undefined;
 }
 
-// ASK_AGENT: an owner turn in a coding-agent session that asks a question.
-// Requests phrased as questions ("can you fix X?") are not seeking.
+const SYSTEM_REPLY_TAG = /^<(send_user_message_question_reply|external_codex_apps_|environment_context|permissions|collaboration_mode|turn_aborted)\b/i;
+
+const RHETORICAL_SCOLDING =
+  /\b(did you lie|you['’]?re lying|you lied|how could you|what the hell|why would you|so you['’]?re telling me|i want a refund|burn it all down|delete everything|did you (actually|really|even|set up|check|push|run|test)\b|why (did|do|don['’]?t|are) you\b|what are you (doing|waiting|running)\b|what task are you\b|who is your implementation agent\b|are you using .* subagents\b|how did you imagine\b|do you (want to know|care|prefer)\b)/i;
+
+const INTERROGATIVE_START =
+  /^(what|how|why|where|when|which|who|whose|is|are|does|do(?!\s+not\b|n['’]?t\b)|did|should|has|have)\b/i;
+
+const POLITE_REQUEST_OR_IMPERATIVE =
+  /^(can|could|would|will) you\b|^please\b|^do\s+not\b|^don['’]?t\b/i;
+
+// ASK_AGENT: an owner turn in a coding-agent session that asks a genuine information-seeking question.
+// Requests phrased as questions ("can you fix X?"), system reply tags, imperatives ("Do not..."),
+// and rhetorical complaints/scolding directed at the agent are not seeking.
 export function isQuestion(text: string): boolean {
   const head = text.trim().slice(0, 500);
-  if (/^(can|could|would|will) you\b|^please\b/i.test(head)) return false;
-  return /\?/.test(head) || /^(what|how|why|where|when|which|who|whose|is|are|does|do|did|should|has|have)\b/i.test(head);
+  if (!head) return false;
+  if (SYSTEM_REPLY_TAG.test(head)) return false;
+  if (POLITE_REQUEST_OR_IMPERATIVE.test(head)) return false;
+  if (RHETORICAL_SCOLDING.test(head)) return false;
+
+  const sentences = head
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const nonRequestSentences = sentences.filter((s) => !POLITE_REQUEST_OR_IMPERATIVE.test(s));
+  if (nonRequestSentences.length === 0) return false;
+
+  return nonRequestSentences.some((s) => /\?/.test(s) || INTERROGATIVE_START.test(s));
 }
 
 const DOCS_HOSTS = /(^|\.)(docs\.rs|pkg\.go\.dev|devdocs\.io|developer\.mozilla\.org|developer\.apple\.com|learn\.microsoft\.com)$|^docs\.[^.]+\.[^.]+$|\.readthedocs\.(io|org)$/i;
@@ -207,6 +230,14 @@ export function classifyEventAll(e: EpisodicEvent): Seek[] {
       .filter((s): s is Seek => s !== null);
   }
   const meta = parseMeta(e.metadataJson);
+  if (
+    (e.source === "codex_session" || e.source === "antigravity_session") &&
+    meta.kind === "tool_command"
+  ) {
+    return splitCommands(e.contentText)
+      .map(classifyCommand)
+      .filter((s): s is Seek => s !== null);
+  }
   if (e.source === "chrome" && meta.kind === "search") return [{ kind: "WEB_SEARCH", query: e.contentText }];
   if (e.source === "chrome" && meta.kind === "visit") {
     const q = docsSiteQuery(e.sourceUri, e.contentText);
