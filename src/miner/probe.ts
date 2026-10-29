@@ -10,6 +10,12 @@ import { censusFiles, listFiles } from "./parsers/files.js";
 const SAFE_KEY = /^[A-Za-z_][A-Za-z0-9_.-]{0,39}$/;
 const SAFE_VALUE = /^[a-z][a-z0-9_.-]{0,39}$/i;
 const MAX_FILE_BYTES = 50 * 1024 * 1024;
+const NO_TAG = "(no leading tag)";
+
+// A leading tag name is printed only if it appears in at least this many files (and in at
+// least 10% of the files that have user messages). Tool-injected context appears in most
+// sessions; a tag the owner typed once does not, and is counted without its name.
+export const TAG_MIN_FILES = 3;
 
 export function keyList(o: Record<string, unknown>): string {
   return Object.keys(o)
@@ -45,7 +51,9 @@ export function signature(o: unknown): string {
   return parts.join(" ");
 }
 
-// The leading tag of user-role texts (e.g. "<environment_context>"), never the text.
+// The leading tag name of a user-role text (e.g. "environment_context"), never the text.
+// Tag names can themselves be owner content, so probeJsonl only prints the ones common
+// enough across files to be injected by the tool (see TAG_MIN_FILES).
 function leadingTag(o: unknown): string | null {
   if (!isObject(o)) return null;
   const msg = isObject(o.payload) && o.payload.type === "message" ? o.payload : o.type === "message" ? o : null;
@@ -53,7 +61,7 @@ function leadingTag(o: unknown): string | null {
   for (const c of msg.content) {
     if (isObject(c) && typeof c.text === "string") {
       const m = /^\s*<([a-z_][a-z0-9_-]{0,39})>/i.exec(c.text);
-      return m ? `<${m[1]}>` : "(no leading tag)";
+      return m ? `<${m[1]}>` : NO_TAG;
     }
   }
   return null;
@@ -69,6 +77,7 @@ function top(m: Map<string, number>, n: number): string[] {
 function probeJsonl(files: string[], out: string[]): void {
   const sigs = new Map<string, number>();
   const tags = new Map<string, number>();
+  const tagFiles = new Map<string, Set<string>>();
   let lines = 0;
   let bad = 0;
   let skippedLarge = 0;
@@ -90,12 +99,27 @@ function probeJsonl(files: string[], out: string[]): void {
       const s = signature(o);
       sigs.set(s, (sigs.get(s) ?? 0) + 1);
       const t = leadingTag(o);
-      if (t) tags.set(t, (tags.get(t) ?? 0) + 1);
+      if (t) {
+        tags.set(t, (tags.get(t) ?? 0) + 1);
+        if (!tagFiles.has(t)) tagFiles.set(t, new Set());
+        tagFiles.get(t)!.add(f);
+      }
     }
   }
   out.push(`  ${files.length} files, ${lines} lines, ${bad} not JSON, ${skippedLarge} files over 50 MB skipped`);
   out.push("  record signatures (count, signature):", ...top(sigs, 60));
-  if (tags.size) out.push("  user-message leading tags (count, tag):", ...top(tags, 30));
+  if (tags.size) {
+    const filesWithUser = new Set([...tagFiles.values()].flatMap((fs) => [...fs])).size;
+    const minFiles = Math.max(TAG_MIN_FILES, Math.ceil(0.1 * filesWithUser));
+    const shown = new Map<string, number>();
+    let hidden = 0;
+    for (const [t, n] of tags) {
+      if (t === NO_TAG || (tagFiles.get(t)?.size ?? 0) >= minFiles) shown.set(t, n);
+      else hidden += n;
+    }
+    if (hidden > 0) shown.set(`(leading tags in fewer than ${minFiles} files, names withheld)`, hidden);
+    out.push("  user-message leading tags (count, tag):", ...top(shown, 30));
+  }
 }
 
 export function probe(cfg: MinerConfig): string {

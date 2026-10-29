@@ -8,6 +8,35 @@ import { bump, emptyCounts, type EpisodicEvent, type ParseResult } from "../type
 // Chrome stores times as microseconds since 1601-01-01 UTC.
 export const CHROME_EPOCH_OFFSET_MS = 11644473600000;
 
+// Search-results pages whose query parameter is the search term. Used for visits that
+// Chromium did not record in keyword_search_terms (e.g. an engine that is not configured
+// as a search provider in that profile).
+const SEARCH_URLS: Array<{ host: RegExp; path: RegExp; param: string }> = [
+  { host: /(^|\.)google\.[a-z.]+$/, path: /^\/search$/, param: "q" },
+  { host: /(^|\.)bing\.com$/, path: /^\/search$/, param: "q" },
+  { host: /(^|\.)duckduckgo\.com$/, path: /^\/(html\/?)?$/, param: "q" },
+  { host: /^search\.brave\.com$/, path: /^\/search$/, param: "q" },
+  { host: /(^|\.)kagi\.com$/, path: /^\/search$/, param: "q" },
+  { host: /^github\.com$/, path: /^\/search$/, param: "q" },
+  { host: /(^|\.)stackoverflow\.com$/, path: /^\/search$/, param: "q" },
+];
+
+export function searchTermFromUrl(url: string): string | null {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return null;
+  }
+  for (const s of SEARCH_URLS) {
+    if (s.host.test(u.hostname) && s.path.test(u.pathname)) {
+      const q = u.searchParams.get(s.param)?.trim();
+      return q ? q : null;
+    }
+  }
+  return null;
+}
+
 // Returns every <root>/<profile>/History file under the given Chromium user-data roots.
 export function findChromiumHistoryFiles(roots: string[]): string[] {
   const found: string[] = [];
@@ -27,7 +56,8 @@ export function findChromiumHistoryFiles(roots: string[]): string[] {
 
 // Reads one History file. The file is copied first (Chrome keeps it locked) and the
 // copy is opened read-only. Search terms become WEB_SEARCH candidates; visits to the
-// search-results pages themselves are skipped so they are not double counted.
+// search-results pages behind those terms are skipped so they are not double counted.
+// Other visits to a known search-results URL become searches from the URL's query.
 export function parseChromeHistory(historyPath: string): ParseResult {
   const counts = emptyCounts();
   const events: EpisodicEvent[] = [];
@@ -98,6 +128,20 @@ export function parseChromeHistory(historyPath: string): ParseResult {
         }
         if (r.ts_ms <= 0) {
           bump(counts.skipped, "no_timestamp");
+          continue;
+        }
+        const term = searchTermFromUrl(r.url);
+        if (term) {
+          events.push(
+            makeEvent({
+              source: "chrome",
+              timestampMs: r.ts_ms,
+              contentText: term,
+              sourceUri: r.url,
+              metadataJson: JSON.stringify({ kind: "search", via: "url", history: historyPath, visit_id: r.visit_id }),
+            }),
+          );
+          counts.parsed++;
           continue;
         }
         events.push(

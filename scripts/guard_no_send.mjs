@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Owner-owned guard (see AGENTS.md section 4). Fails if send-capable APIs appear
-// anywhere in tracked files, or network APIs appear under src/miner/ or src/capture/.
+// anywhere in tracked files, or network APIs appear under src/miner/, src/capture/, or capture/.
 //
 // Usage: node scripts/guard_no_send.mjs [--root <git work tree>]
 //
@@ -28,7 +28,7 @@ const SEND_PATTERNS = [
   "sendMultipartTextMessage",
 ];
 
-const NETWORK_SCOPES = ["src/miner/", "src/capture/"];
+const NETWORK_SCOPES = ["src/miner/", "src/capture/", "capture/"];
 const NETWORK_PATTERNS = [
   { name: "http/https/http2/net/dgram/tls/undici module", re: /["'](node:)?(http|https|http2|net|dgram|tls|undici)["']/ },
   { name: "fetch(", re: /\bfetch\s*\(/ },

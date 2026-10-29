@@ -12,6 +12,7 @@ import { buildEpisodes } from "./episodes.js";
 import { formatIngestTable, ingest } from "./ingest.js";
 import { probe } from "./probe.js";
 import { rate, writeReport } from "./report.js";
+import { computeSensitivity } from "./sensitivity.js";
 import { EventStore } from "./store.js";
 
 function checkNode(): void {
@@ -52,7 +53,15 @@ function main(argv: string[]): number {
       const episodes = buildEpisodes(events, cfg);
       const ceiling = evaluateCeiling(episodes, store);
       const written = writeReport(
-        { cfg, counts: store.readCounts(), events, episodes, ceiling, generatedAt: new Date() },
+        {
+          cfg,
+          counts: store.readCounts(),
+          events,
+          episodes,
+          ceiling,
+          sensitivity: computeSensitivity(events, store, cfg),
+          generatedAt: new Date(),
+        },
         flag(args, "--out"),
       );
       console.log(`episodes: ${episodes.length}`);

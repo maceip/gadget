@@ -1,9 +1,10 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, resolve, isAbsolute } from "node:path";
+import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, relative, resolve, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DAY_MS, type CeilingResult, type EpisodeEval, type Rate } from "./ceiling.js";
 import type { MinerConfig } from "./config.js";
 import { MINER_VERSION } from "./event.js";
+import type { SensitivityRow } from "./sensitivity.js";
 import type { StoredEvent } from "./store.js";
 import type { ParseCounts, SeekingEpisode } from "./types.js";
 
@@ -13,6 +14,20 @@ export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", 
 export function isInside(child: string, parent: string): boolean {
   const rel = relative(resolve(parent), resolve(child));
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+// Resolves symlinks in the longest existing prefix of p, so a path that does not exist
+// yet still compares by where it would really be written.
+export function realResolve(p: string): string {
+  let cur = resolve(p);
+  const tail: string[] = [];
+  while (!existsSync(cur)) {
+    const parent = dirname(cur);
+    if (parent === cur) break;
+    tail.unshift(basename(cur));
+    cur = parent;
+  }
+  return join(existsSync(cur) ? realpathSync(cur) : cur, ...tail);
 }
 
 // Deterministic PRNG so a sample can be reproduced from its seed.
@@ -43,6 +58,7 @@ export interface ReportInput {
   events: StoredEvent[];
   episodes: SeekingEpisode[];
   ceiling: CeilingResult;
+  sensitivity?: SensitivityRow[];
   generatedAt: Date;
 }
 
@@ -105,6 +121,25 @@ export function renderReport(input: ReportInput): { markdown: string; csv: strin
     "",
   );
 
+  if (input.sensitivity?.length) {
+    out.push("## Sensitivity to the episode parameters", "");
+    out.push(
+      "The seek gap decides which seek actions form one episode, so it moves the rates. " +
+        "The context window only changes what counts as a failing command before a COMMAND_SUCCEEDED resolution and what context is shown.",
+      "",
+    );
+    out.push(
+      "| seek gap | context window | episodes | resolved | repeat-seek | local-hit | local-hit, older than one day |",
+      "|---|---|---|---|---|---|---|",
+    );
+    for (const r of input.sensitivity) {
+      out.push(
+        `| ${minutes(r.seekGapMs)}${r.isDefault ? " (default)" : ""} | ${minutes(r.contextWindowMs)} | ${r.episodes} | ${r.resolved} | ${rate(r.repeatSeek)} | ${rate(r.localHit)} | ${rate(r.localHitOlderThanDay)} |`,
+      );
+    }
+    out.push("");
+  }
+
   out.push(`## Sample: ${sampled.length} episodes (seed ${cfg.seed})`, "");
   out.push("Label each one in `labels.csv` next to this file: was it real seeking (Y/N), and was the answer already in your data (Y/N).", "");
   sampled.forEach((ep, n) => {
@@ -138,7 +173,7 @@ export function renderReport(input: ReportInput): { markdown: string; csv: strin
 export function writeReport(input: ReportInput, outDirOverride?: string): { dir: string; reportPath: string; labelsPath: string } {
   const stamp = input.generatedAt.toISOString().replace(/[:.]/g, "-");
   const dir = resolve(outDirOverride ?? join(input.cfg.reportsDir, stamp));
-  if (isInside(dir, REPO_ROOT)) {
+  if (isInside(realResolve(dir), realResolve(REPO_ROOT))) {
     throw new Error(`refusing to write a report inside the repo (${dir}); reports contain private data`);
   }
   mkdirSync(dir, { recursive: true, mode: 0o700 });

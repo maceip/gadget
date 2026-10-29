@@ -52,6 +52,38 @@ test("episodes: grouping by gap, context window, TEST_PASSED after a failing tes
   assert.equal(c.costMs, undefined);
 });
 
+test("episodes: an exit-code resolution is timed at command end; one ending past the window does not count", () => {
+  const ok = buildEpisodes(
+    [
+      ev("zsh_hook", T0, "npm test", { exit: 1, end_ms: T0 + 1000 }),
+      ev("zsh_hook", T0 + MIN, "rg tierUp", { exit: 0, end_ms: T0 + MIN }),
+      ev("zsh_hook", T0 + 2 * MIN, "npm test", { exit: 0, end_ms: T0 + 9 * MIN }),
+    ].map(stored),
+    params,
+  );
+  assert.equal(ok[0]!.resolution?.kind, "TEST_PASSED");
+  assert.equal(ok[0]!.resolution?.atMs, T0 + 9 * MIN);
+  assert.equal(ok[0]!.costMs, 8 * MIN);
+
+  const late = buildEpisodes(
+    [
+      ev("zsh_hook", T0, "npm test", { exit: 1, end_ms: T0 + 1000 }),
+      ev("zsh_hook", T0 + MIN, "rg tierUp", { exit: 0, end_ms: T0 + MIN }),
+      ev("zsh_hook", T0 + 20 * MIN, "npm test", { exit: 0, end_ms: T0 + 45 * MIN }),
+    ].map(stored),
+    params,
+  );
+  assert.equal(late[0]!.resolution, undefined);
+});
+
+test("episodes: forward-captured commands never produce the WORK_RESUMED fallback", () => {
+  const eps = buildEpisodes(
+    [ev("zsh_hook", T0, "rg tierUp", { exit: 0, end_ms: T0 }), ev("zsh_hook", T0 + MIN, "vim x.ts", { exit: 0, end_ms: T0 + MIN })].map(stored),
+    params,
+  );
+  assert.equal(eps[0]!.resolution, undefined);
+});
+
 test("episodes: seek actions less than the gap apart chain into one episode", () => {
   const events = [0, 4, 8, 12].map((m) => stored(ev("zsh", T0 + m * MIN, `rg q${m}`)));
   const eps = buildEpisodes(events, params);

@@ -87,27 +87,37 @@ function findResolution(
     const e = events[i]!;
     if (e.timestampMs > deadline) break;
     if (e.source === "zsh_hook" && exitCode(e) === 0 && failed.has(program(e.contentText) ?? "")) {
+      // A success is known when the command finishes, not when it starts.
+      const endMs = endTime(e);
+      if (endMs > deadline) continue;
       return {
         kind: TEST_COMMAND.test(e.contentText) ? "TEST_PASSED" : "COMMAND_SUCCEEDED",
         sourceUri: e.sourceUri,
-        atMs: e.timestampMs,
+        atMs: endMs,
       };
     }
-    if (!firstWork && isWorkEvent(e)) firstWork = e;
+    if (!firstWork && isBackfillWorkEvent(e)) firstWork = e;
   }
   return firstWork ? { kind: "WORK_RESUMED", sourceUri: firstWork.sourceUri, atMs: firstWork.timestampMs } : undefined;
 }
 
-// Normal work, as opposed to looking things up or reading pages.
-function isWorkEvent(e: StoredEvent): boolean {
+// Normal work, as opposed to looking things up or reading pages. WORK_RESUMED is the
+// weak fallback for backfilled sources only (AGENTS.md 6.1): forward-captured hook
+// commands resolve an episode only through an exit-code pair above.
+function isBackfillWorkEvent(e: StoredEvent): boolean {
   if (e.seek) return false;
-  if (e.source === "zsh" || e.source === "zsh_hook" || e.source === "git") return true;
+  if (e.source === "zsh" || e.source === "git") return true;
   return e.source === "codex_session" && parseMeta(e.metadataJson).role === "user";
 }
 
 function exitCode(e: StoredEvent): number | undefined {
   const v = parseMeta(e.metadataJson).exit;
   return typeof v === "number" ? v : undefined;
+}
+
+function endTime(e: StoredEvent): number {
+  const v = parseMeta(e.metadataJson).end_ms;
+  return typeof v === "number" && v >= e.timestampMs ? v : e.timestampMs;
 }
 
 // First word of the first simple command, e.g. "npm" for "npm test".

@@ -58,7 +58,10 @@ export function parseCodexSession(text: string, path: string): ParseResult {
       bump(counts.skipped, "no_timestamp");
       return;
     }
-    if (role === "user" && isInjectedContext(content)) {
+    // The CLI injects context (environment, instructions) as user turns wrapped in tags.
+    // Strip complete leading tag blocks and keep whatever the owner wrote after them.
+    const text = role === "user" ? stripLeadingContext(content) : content;
+    if (!text) {
       bump(counts.skipped, "injected_context");
       return;
     }
@@ -67,9 +70,9 @@ export function parseCodexSession(text: string, path: string): ParseResult {
         source: "codex_session",
         timestampMs: ts,
         workspacePath: cwd,
-        contentText: content,
+        contentText: text,
         sourceUri: `${path}#${idx + 1}`,
-        metadataJson: JSON.stringify({ role }),
+        metadataJson: JSON.stringify(text === content ? { role } : { role, stripped_leading_context: true }),
       }),
     );
     counts.parsed++;
@@ -77,9 +80,16 @@ export function parseCodexSession(text: string, path: string): ParseResult {
   return { events, counts };
 }
 
-// User-role messages that the CLI injects (environment, instructions) start with a tag.
-export function isInjectedContext(text: string): boolean {
-  return /^\s*<[a-z_][a-z0-9_-]*>/i.test(text);
+// Removes complete <tag>...</tag> blocks at the start of a message. A message that is
+// only such blocks becomes "" (injected context). An unclosed leading tag is kept as-is.
+export function stripLeadingContext(text: string): string {
+  let rest = text;
+  for (;;) {
+    const m = /^\s*<([a-z_][a-z0-9_-]*)>[\s\S]*?<\/\1>/i.exec(rest);
+    if (!m) break;
+    rest = rest.slice(m[0].length);
+  }
+  return rest.trim();
 }
 
 function messageText(content: unknown): string {

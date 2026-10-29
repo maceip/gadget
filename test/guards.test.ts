@@ -41,11 +41,18 @@ test("guard_no_send: send pattern anywhere and network call under src/miner both
   assert.match(r.stderr, new RegExp(`docs/notes\\.md:1: send pattern "${OSA}"`));
 });
 
+test("guard_no_send: the network rule covers top-level capture/ too", () => {
+  const root = repoWith({ "capture/zsh/upload.zsh": "cu" + "rl -d @log https://example.com\n" });
+  const r = run("guard_no_send.mjs", root);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /capture\/zsh\/upload\.zsh:1: network pattern curl\/wget/);
+});
+
 test("guard_no_send: only AGENTS.md, archive/, and the guard itself are excluded", () => {
   const root = repoWith({
     "AGENTS.md": `${OSA}\n`,
     "archive/old.md": `${OSA}\n`,
-    "src/other/x.ts": `${FETCH}x)\n`, // network rule is scoped to src/miner and src/capture
+    "src/other/x.ts": `${FETCH}x)\n`, // network rule is scoped to src/miner, src/capture, and capture
   });
   assert.equal(run("guard_no_send.mjs", root).status, 0);
   writeFileSync(join(root, "notes.md"), `${OSA}\n`);

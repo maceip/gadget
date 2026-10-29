@@ -48,6 +48,10 @@ const CASES: Array<[string, string | null, string?]> = [
   ["grep -- -v file", "GREP", "-v"],
   ['grep "two words" file', "GREP", "two words"],
   ["time rg --max-depth 2 needle", "GREP", "needle"],
+  ["cat <<'EOF' > notes.md\ngrep needle in a heredoc body\nEOF", null],
+  ["cat <<EOF > a.txt\nrg body\nEOF\nrg real", "GREP", "real"],
+  ["cat <<-END\n\tgrep tabbed\n\tEND", null],
+  ["grep <<< 'input text' pattern", "GREP", "pattern"],
 ];
 
 for (const [cmd, kind, query] of CASES) {

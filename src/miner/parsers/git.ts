@@ -62,6 +62,10 @@ export function parseGitLog(output: string, repo: string): ParseResult {
 }
 
 // Read-only: `git log` with --no-optional-locks so it never takes the index lock.
+// Events use the committer time (%ct), not the author time: a rebased, cherry-picked,
+// or imported commit can carry an author date long before it existed here, which
+// would leak it into replays of earlier moments. (Fetch time would be stricter still;
+// it is not recorded in the log.)
 export function readGitRepo(repo: string, maxCommits: number): ParseResult {
   let out: string;
   try {
@@ -75,7 +79,7 @@ export function readGitRepo(repo: string, maxCommits: number): ParseResult {
         "--all",
         "--no-color",
         `--max-count=${maxCommits}`,
-        `--format=%H${FIELD}%at${FIELD}%an${FIELD}%s${FIELD}%b${RECORD}`,
+        `--format=%H${FIELD}%ct${FIELD}%an${FIELD}%s${FIELD}%b${RECORD}`,
       ],
       { encoding: "utf8", maxBuffer: 1 << 30, stdio: ["ignore", "pipe", "pipe"] },
     );

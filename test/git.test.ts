@@ -6,7 +6,7 @@ import { test } from "node:test";
 import { discoverRepos, parseGitLog, readGitRepo } from "../src/miner/parsers/git.js";
 import { tmp } from "./helpers.js";
 
-function initRepo(dir: string, commits: Array<{ msg: string; date: string }>) {
+function initRepo(dir: string, commits: Array<{ msg: string; date: string; authorDate?: string }>) {
   mkdirSync(dir, { recursive: true });
   const git = (...args: string[]) =>
     execFileSync("git", ["-C", dir, ...args], {
@@ -24,7 +24,7 @@ function initRepo(dir: string, commits: Array<{ msg: string; date: string }>) {
       env: {
         ...process.env,
         GIT_CONFIG_GLOBAL: "/dev/null",
-        GIT_AUTHOR_DATE: c.date,
+        GIT_AUTHOR_DATE: c.authorDate ?? c.date,
         GIT_COMMITTER_DATE: c.date,
       },
     });
@@ -70,4 +70,11 @@ test("git: malformed records are counted, not guessed", () => {
 test("git: a path that is not a repo is reported, not thrown", () => {
   const r = readGitRepo(tmp(), 10);
   assert.equal(r.counts.unknown.git_log_failed, 1);
+});
+
+test("git: events use committer time, so a rebased commit with an old author date is not back-dated", () => {
+  const repo = join(tmp(), "proj");
+  initRepo(repo, [{ msg: "Cherry-picked fix", authorDate: "2025-01-01T00:00:00Z", date: "2026-03-04T05:06:07Z" }]);
+  const r = readGitRepo(repo, 10);
+  assert.equal(r.events[0]!.timestampMs, Date.UTC(2026, 2, 4, 5, 6, 7));
 });

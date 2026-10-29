@@ -3,8 +3,13 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
-import { CHROME_EPOCH_OFFSET_MS, findChromiumHistoryFiles, parseChromeHistory } from "../src/miner/parsers/chrome.js";
-import { parseCodexSession } from "../src/miner/parsers/codex.js";
+import {
+  CHROME_EPOCH_OFFSET_MS,
+  findChromiumHistoryFiles,
+  parseChromeHistory,
+  searchTermFromUrl,
+} from "../src/miner/parsers/chrome.js";
+import { parseCodexSession, stripLeadingContext } from "../src/miner/parsers/codex.js";
 import { T0, tmp } from "./helpers.js";
 
 // Realistic Chrome timestamps (~1.3e16 microseconds) are above 2^53, so insert them as BigInt.
@@ -49,9 +54,25 @@ test("chrome: search terms, visits, exact times, search pages not double counted
   assert.equal(visit.timestampMs, T0 + 60_000);
   assert.equal(visit.contentText, "WebAssembly compilation pipeline\nhttps://v8.dev/docs/wasm-compilation-pipeline");
 
+  // Without keyword_search_terms, the search-results URL itself becomes the search.
   const r2 = parseChromeHistory(files[1]!);
   assert.deepEqual(r2.counts.unknown, { "missing_table:keyword_search_terms": 1 });
-  assert.equal(r2.counts.parsed, 2); // both pages are plain visits without the search table
+  assert.equal(r2.counts.parsed, 2);
+  const fromUrl = r2.events.find((e) => JSON.parse(e.metadataJson).kind === "search")!;
+  assert.equal(fromUrl.contentText, "wasm tier up flag");
+  assert.equal(JSON.parse(fromUrl.metadataJson).via, "url");
+  assert.equal(r2.events.filter((e) => JSON.parse(e.metadataJson).kind === "visit").length, 1);
+});
+
+test("chrome: search terms are read from known search-results URLs only", () => {
+  assert.equal(searchTermFromUrl("https://www.google.com/search?q=v8+jitless&oq=v8"), "v8 jitless");
+  assert.equal(searchTermFromUrl("https://www.google.co.uk/search?q=tier-up"), "tier-up");
+  assert.equal(searchTermFromUrl("https://duckduckgo.com/?q=rg+glob"), "rg glob");
+  assert.equal(searchTermFromUrl("https://github.com/search?q=wasm-tier-up&type=code"), "wasm-tier-up");
+  assert.equal(searchTermFromUrl("https://www.google.com/maps?q=cafe"), null);
+  assert.equal(searchTermFromUrl("https://notgoogle.com/search?q=x"), null);
+  assert.equal(searchTermFromUrl("https://www.google.com/search"), null);
+  assert.equal(searchTermFromUrl("not a url"), null);
 });
 
 test("chrome: the source file is opened through a copy and left unchanged", () => {
@@ -110,4 +131,25 @@ test("codex: messages, workspace from session_meta, injected context, unknown sh
       ["Pass --wasm-tier-up=false.", "assistant", "/Users/me/vitre", "/c/rollout.jsonl#4"],
     ],
   );
+});
+
+test("codex: owner text after injected context blocks is kept; context-only turns are dropped", () => {
+  assert.equal(stripLeadingContext("<environment_context>cwd=/w</environment_context>\n\nwhere is the flag?"), "where is the flag?");
+  assert.equal(stripLeadingContext("<a>x</a><b>y</b>"), "");
+  assert.equal(stripLeadingContext("<unclosed> keep this"), "<unclosed> keep this");
+  assert.equal(stripLeadingContext("plain question?"), "plain question?");
+
+  const line = JSON.stringify({
+    timestamp: "2026-10-01T12:00:00.000Z",
+    type: "response_item",
+    payload: {
+      type: "message",
+      role: "user",
+      content: [{ type: "input_text", text: "<environment_context>cwd=/w</environment_context>\nhow do I disable tier-up?" }],
+    },
+  });
+  const r = parseCodexSession(line, "/c/s.jsonl");
+  assert.equal(r.counts.parsed, 1);
+  assert.equal(r.events[0]!.contentText, "how do I disable tier-up?");
+  assert.deepEqual(JSON.parse(r.events[0]!.metadataJson), { role: "user", stripped_leading_context: true });
 });

@@ -50,7 +50,7 @@ The system and the agents building it may read all of the owner's data. **Nothin
 - The owner's phone is never adb-connected to a machine where agents run.
 - OAuth tokens, if any, use read-only scopes (e.g. `gmail.readonly`).
 - A browser extension, if built, reads the DOM only: no clicks, input events, or form submits.
-- CI guard `scripts/guard_no_send.mjs` fails the build if send-capable APIs appear anywhere in the codebase, and if network APIs appear under `src/miner/` or `src/capture/`. The pattern lists live in that script; examples:
+- CI guard `scripts/guard_no_send.mjs` fails the build if send-capable APIs appear anywhere in the codebase, and if network APIs appear under `src/miner/`, `src/capture/`, or `capture/`. The pattern lists live in that script; examples:
   `osascript`, `application "Messages"`, `gmail.send`, `gmail.compose`, `gmail.modify`, `nodemailer`, `smtplib`, `.click()`, `dispatchEvent(`, `.submit()`, `chrome.debugger`, `addResultsToIntent`, `sendTextMessage`.
   The guard is a backstop; the separate user account and read-only tokens are the real fence.
 - **External queries are outbound.** A web search or external API query may contain only tokens that appear in public sources (e.g. an error string from a public library). Anything with private names, repo names, people, or internal flags is dropped or goes to the outbox for the owner.
@@ -87,7 +87,7 @@ interface SeekingEpisode {
     answerSpan?: string;            // exact text, when it was a paste
     atMs: number;
   };
-  costMs: number;                   // seekStart -> resolution
+  costMs?: number;                  // seekStart -> resolution; absent when unresolved
 }
 ```
 
@@ -240,8 +240,9 @@ Every verdict other than `GOOD`:
 5. Ceiling report (`report.md`):
    - per-source event counts and parse-failure counts;
    - episode count;
-   - **repeat-seek rate:** episodes whose query matches an earlier episode or earlier content ("you looked for this before");
+   - **repeat-seek rate:** episodes whose normalized query matches a query from an earlier episode ("you looked for this before"); matches in earlier non-seek content are what the local-hit rate measures, so the two stay separate;
    - **local-hit rate:** FTS over data older than `seekStartMs` returns a hit containing the query's key tokens;
+   - both rates at more than one `SEEK_GAP` and `CONTEXT_WINDOW` value, so the owner can see how much they depend on the defaults;
    - 25 random episodes with context excerpt, queries, and top local hit with pointer, for the owner to label Y/N ("the answer was in my data") in `labels.csv`.
 
 Exit: the owner has labeled the 25. If fewer than 20 look like real seeking to the owner, fix detection before Phase 1. Record the numbers in `STATUS.md` with the commit sha.
