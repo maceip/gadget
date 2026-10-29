@@ -107,31 +107,37 @@ export function ensureSensoryBinary(binDir = join(homedir(), ".gadget", "bin")):
     "/opt/homebrew/bin/swiftc",
   ]);
 
-  const tmpBinPath = `${binPath}.tmp.${process.pid}`;
+  const tmpDir = join(binDir, `.tmp-${process.pid}`);
+  mkdirSync(tmpDir, { recursive: true, mode: 0o700 });
+  const tmpBinPath = join(tmpDir, SENSORY_EXEC_NAME);
   rmSync(tmpBinPath, { force: true });
-  execFileSync(
-    swiftc,
-    [
-      "-O",
-      "-Xlinker",
-      "-sectcreate",
-      "-Xlinker",
-      "__TEXT",
-      "-Xlinker",
-      "__info_plist",
-      "-Xlinker",
-      plistPath,
-      srcPath,
-      "-o",
-      tmpBinPath,
-    ],
-    {
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: 60_000,
-    },
-  );
-  chmodSync(tmpBinPath, 0o700);
-  renameSync(tmpBinPath, binPath);
+  try {
+    execFileSync(
+      swiftc,
+      [
+        "-O",
+        "-Xlinker",
+        "-sectcreate",
+        "-Xlinker",
+        "__TEXT",
+        "-Xlinker",
+        "__info_plist",
+        "-Xlinker",
+        plistPath,
+        srcPath,
+        "-o",
+        tmpBinPath,
+      ],
+      {
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 60_000,
+      },
+    );
+    chmodSync(tmpBinPath, 0o700);
+    renameSync(tmpBinPath, binPath);
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true });
+  }
 
   // Ad-hoc sign the .app bundle with its descriptive bundle identifier so macOS TCC
   // tracks permissions for "Gadget Read-Only Sensory Capture" (local.gadget.sensory-capture).
@@ -147,18 +153,27 @@ export function ensureSensoryBinary(binDir = join(homedir(), ".gadget", "bin")):
 
   // Also install a copy into ~/Applications when building in the default ~/.gadget/bin
   // so the user can see and toggle "Gadget Read-Only Sensory Capture.app" in System Settings.
+  // Never overwrite ~/Applications/Gadget Read-Only Sensory Capture.app if its binary already matches,
+  // preserving macOS TCC authorization across daemon restarts.
   const defaultBinDir = join(homedir(), ".gadget", "bin");
   if (resolve(binDir) === resolve(defaultBinDir)) {
     try {
       const userAppsDir = join(homedir(), "Applications");
       mkdirSync(userAppsDir, { recursive: true });
       const installedAppPath = join(userAppsDir, `${SENSORY_APP_NAME}.app`);
-      cpSync(appBundlePath, installedAppPath, { recursive: true, force: true });
-      execFileSync(
-        codesign,
-        ["--force", "--sign", "-", "--identifier", SENSORY_BUNDLE_ID, installedAppPath],
-        { stdio: ["ignore", "pipe", "pipe"], timeout: 15_000 },
-      );
+      const installedBinPath = join(installedAppPath, "Contents", "MacOS", SENSORY_EXEC_NAME);
+      const newBinSha = createHash("sha256").update(readFileSync(binPath)).digest("hex");
+      const existingBinSha = existsSync(installedBinPath)
+        ? createHash("sha256").update(readFileSync(installedBinPath)).digest("hex")
+        : "";
+      if (newBinSha !== existingBinSha) {
+        cpSync(appBundlePath, installedAppPath, { recursive: true, force: true });
+        execFileSync(
+          codesign,
+          ["--force", "--sign", "-", "--identifier", SENSORY_BUNDLE_ID, installedAppPath],
+          { stdio: ["ignore", "pipe", "pipe"], timeout: 15_000 },
+        );
+      }
     } catch {
       // ignore if ~/Applications is restricted in a sandboxed test environment
     }
@@ -178,11 +193,59 @@ export function runSensoryCommand<T>(args: string[], binDir?: string): T {
   return JSON.parse(out.trim()) as T;
 }
 
+export function getInstalledSensoryAppBundlePath(binDir = join(homedir(), ".gadget", "bin")): string {
+  const defaultBinDir = join(homedir(), ".gadget", "bin");
+  const userApp = join(homedir(), "Applications", `${SENSORY_APP_NAME}.app`);
+  if (resolve(binDir) === resolve(defaultBinDir) && existsSync(userApp)) {
+    return userApp;
+  }
+  return getSensoryAppBundlePath(binDir);
+}
+
+// Runs a sensory command via LaunchServices (`/usr/bin/open -g -n --stdout <file> -a <.app>`)
+// so macOS TCC attributes the Responsible Process to "Gadget Read-Only Sensory Capture.app"
+// rather than the parent shell/node process. Falls back to direct execution in custom test binDirs.
+export function runSensoryViaLaunchServices<T>(args: string[], binDir?: string): T {
+  const defaultBinDir = join(homedir(), ".gadget", "bin");
+  if (binDir !== undefined && resolve(binDir) !== resolve(defaultBinDir)) {
+    return runSensoryCommand<T>(args, binDir);
+  }
+  ensureSensoryBinary(binDir);
+  const appPath = getInstalledSensoryAppBundlePath(binDir);
+  const outDir = binDir ?? defaultBinDir;
+  const outJsonPath = join(outDir, `ls-out-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`);
+  writeFileSync(outJsonPath, "", { mode: 0o600 });
+
+  const extraWaitMs = args[0] === "watch-keys" ? Math.ceil((Number(args[1] ?? 1.0) + 4.0) * 1000) : 6_000;
+  try {
+    execFileSync(
+      "/usr/bin/open",
+      ["-g", "-n", "--stdout", outJsonPath, "-a", appPath, "--args", ...args],
+      { stdio: ["ignore", "pipe", "pipe"], timeout: 10_000 },
+    );
+    const deadline = Date.now() + extraWaitMs;
+    while (Date.now() < deadline) {
+      if (existsSync(outJsonPath)) {
+        const raw = readFileSync(outJsonPath, "utf8").trim();
+        if (raw.startsWith("{") && raw.endsWith("}")) {
+          return JSON.parse(raw) as T;
+        }
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+    }
+  } catch {
+    // Fallback to direct execution
+  } finally {
+    rmSync(outJsonPath, { force: true });
+  }
+  return runSensoryCommand<T>(args, binDir);
+}
+
 export function checkSensoryPermissions(opts: { prompt?: boolean; binDir?: string } = {}): SensoryPermissionsStatus {
   const args = opts.prompt ? ["permissions", "--prompt"] : ["permissions"];
-  const raw = runSensoryCommand<Omit<SensoryPermissionsStatus, "appBundlePath">>(args, opts.binDir);
+  const raw = runSensoryViaLaunchServices<Omit<SensoryPermissionsStatus, "appBundlePath">>(args, opts.binDir);
   return {
     ...raw,
-    appBundlePath: getSensoryAppBundlePath(opts.binDir),
+    appBundlePath: getInstalledSensoryAppBundlePath(opts.binDir),
   };
 }

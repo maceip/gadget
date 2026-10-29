@@ -1,6 +1,6 @@
 import { appendFileSync, chmodSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { runSensoryCommand } from "./native_helper.js";
+import { runSensoryViaLaunchServices } from "./native_helper.js";
 
 export interface FocusedTextSnapshot {
   trusted: boolean;
@@ -21,7 +21,7 @@ export interface KeyWatchResult {
 }
 
 export function readFocusedTextSafe(binDir?: string): FocusedTextSnapshot {
-  const raw = runSensoryCommand<{
+  const raw = runSensoryViaLaunchServices<{
     trusted: boolean;
     skippedSecure: boolean;
     role?: string | null;
@@ -80,7 +80,7 @@ export function watchKeysBurst(options: {
   binDir?: string;
 } = {}): KeyWatchResult {
   const sec = options.durationSec ?? 1.0;
-  const raw = runSensoryCommand<{
+  const raw = runSensoryViaLaunchServices<{
     listenAccess: boolean;
     skippedSecure: boolean;
     keyCount: number;

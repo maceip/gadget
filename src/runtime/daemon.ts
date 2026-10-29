@@ -43,6 +43,8 @@ export interface DaemonStatus {
   lastScreenLines: number;
   lastClipboardChangeCount: number | null;
   lastFocusedRole: string | null;
+  inputMonitoringAccess: boolean | null;
+  lastKeyCount: number;
   lastAudioTranscript: string | null;
   countsBySource: Record<string, number>;
   errors: string[];
@@ -78,6 +80,8 @@ export class AmbientCatalogDaemon {
     let lastScreenTitle: string | null = null;
     let lastScreenLines = 0;
     let lastFocusedRole: string | null = null;
+    let inputMonitoringAccess: boolean | null = null;
+    let lastKeyCount = 0;
     let lastAudioTranscript: string | null = null;
     const workspacePath = this.opts.workspacePath ?? process.cwd();
 
@@ -107,13 +111,16 @@ export class AmbientCatalogDaemon {
         if (focusRes.snapshot.text?.trim()) {
           this.lastFocusedText = focusRes.snapshot.text.trim();
         }
-        if ((this.opts.keyWatchSec ?? 0) > 0) {
-          watchKeysBurst({
-            durationSec: this.opts.keyWatchSec,
+        const keyWatchSec = this.opts.keyWatchSec ?? 1.5;
+        if (keyWatchSec > 0) {
+          const keyRes = watchKeysBurst({
+            durationSec: keyWatchSec,
             captureJsonlPath: keyboardPath,
             workspacePath,
             binDir: this.opts.binDir,
           });
+          inputMonitoringAccess = keyRes.listenAccess;
+          lastKeyCount = keyRes.keyCount;
         }
       } catch (err) {
         errors.push(`keyboard: ${String(err)}`);
@@ -201,6 +208,8 @@ export class AmbientCatalogDaemon {
       lastScreenLines,
       lastClipboardChangeCount: this.lastClipboardChangeCount ?? null,
       lastFocusedRole,
+      inputMonitoringAccess,
+      lastKeyCount,
       lastAudioTranscript,
       countsBySource,
       errors,

@@ -282,7 +282,7 @@ test("AmbientCatalogDaemon & sensory parsers: screen, audio, keyboard, and learn
 
       // Verify learned log-odds from episodeLabels without hand-written trigger rules
       const all = store.allEventsSorted();
-      const firstId = all[0]!.eventId;
+      const firstId = all.find((e) => e.source === "keyboard")!.eventId;
       const fakeEpPos = {
         episodeId: "ep-pos",
         contextEventIds: [firstId],

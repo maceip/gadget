@@ -246,7 +246,7 @@ async function main(argv: string[]): Promise<number> {
     const intervalMs = Number(flag(args, "--interval-ms") ?? "5000");
     const enableAudio = args.includes("--audio");
     const audioClipSec = Number(flag(args, "--audio-sec") ?? "3");
-    const keyWatchSec = Number(flag(args, "--key-sec") ?? "0.5");
+    const keyWatchSec = Number(flag(args, "--key-sec") ?? "1.5");
     const once = args.includes("--once");
     const daemon = new AmbientCatalogDaemon(cfg, {
       intervalMs,
@@ -260,7 +260,8 @@ async function main(argv: string[]): Promise<number> {
     console.log(JSON.stringify(first));
     if (once) return 0;
 
-    setInterval(async () => {
+    while (true) {
+      await new Promise((resolve) => setTimeout(resolve, Math.max(500, intervalMs)));
       try {
         const st = daemon.runTick();
         await daemon.runProactiveBriefUpdate();
@@ -268,9 +269,7 @@ async function main(argv: string[]): Promise<number> {
       } catch (err) {
         console.error(`daemon tick error: ${String(err)}`);
       }
-    }, Math.max(1000, intervalMs));
-    await new Promise(() => {});
-    return 0;
+    }
   }
 
   if (cmd === "status") {
