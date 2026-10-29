@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import CoreGraphics
 import Foundation
 import Vision
@@ -33,6 +34,174 @@ struct OcrOutput: Codable {
   let lines: [String]
   let frontmostApp: String?
   let windowTitle: String?
+}
+
+struct FocusedTextOutput: Codable {
+  let trusted: Bool
+  let skippedSecure: Bool
+  let role: String?
+  let text: String?
+  let frontmostApp: String?
+  let windowTitle: String?
+}
+
+struct KeyWatchOutput: Codable {
+  let listenAccess: Bool
+  let skippedSecure: Bool
+  let keyCount: Int
+  let text: String
+  let frontmostApp: String?
+  let windowTitle: String?
+}
+
+func inspectFocusedElement() -> (trusted: Bool, isSecure: Bool, role: String?, value: String?) {
+  let trusted = AXIsProcessTrusted()
+  guard trusted else {
+    return (false, false, nil, nil)
+  }
+  let sys = AXUIElementCreateSystemWide()
+  var focusedRef: CFTypeRef?
+  let err = AXUIElementCopyAttributeValue(sys, kAXFocusedUIElementAttribute as CFString, &focusedRef)
+  guard err == .success, let elemRef = focusedRef else {
+    return (true, false, nil, nil)
+  }
+  let elem = elemRef as! AXUIElement
+
+  var roleRef: CFTypeRef?
+  AXUIElementCopyAttributeValue(elem, kAXRoleAttribute as CFString, &roleRef)
+  let role = roleRef as? String
+
+  var subroleRef: CFTypeRef?
+  AXUIElementCopyAttributeValue(elem, kAXSubroleAttribute as CFString, &subroleRef)
+  let subrole = subroleRef as? String
+
+  if role == "AXSecureTextField" || subrole == "AXSecureTextField" {
+    return (true, true, role ?? subrole, nil)
+  }
+
+  var valRef: CFTypeRef?
+  if AXUIElementCopyAttributeValue(elem, kAXValueAttribute as CFString, &valRef) == .success,
+     let str = valRef as? String, !str.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+    let clipped = str.count > 4000 ? String(str.suffix(4000)) : str
+    return (true, false, role, clipped)
+  }
+  return (true, false, role, nil)
+}
+
+func handleFocusedText() {
+  let win = currentWindowMetadata()
+  let info = inspectFocusedElement()
+  printJson(
+    FocusedTextOutput(
+      trusted: info.trusted,
+      skippedSecure: info.isSecure,
+      role: info.role,
+      text: info.value,
+      frontmostApp: win.frontmostApp,
+      windowTitle: win.windowTitle
+    )
+  )
+}
+
+final class KeyCaptureBuffer {
+  var chars: String = ""
+  var keyCount: Int = 0
+  var skippedSecure: Bool = false
+}
+
+func handleWatchKeys(durationSec: Double) {
+  let win = currentWindowMetadata()
+  let hasAccess = CGPreflightListenEventAccess()
+  guard hasAccess else {
+    printJson(
+      KeyWatchOutput(
+        listenAccess: false,
+        skippedSecure: false,
+        keyCount: 0,
+        text: "",
+        frontmostApp: win.frontmostApp,
+        windowTitle: win.windowTitle
+      )
+    )
+    return
+  }
+
+  let buffer = KeyCaptureBuffer()
+  let mask = CGEventMask(1 << CGEventType.keyDown.rawValue)
+  let ptr = Unmanaged.passUnretained(buffer).toOpaque()
+
+  guard let tap = CGEvent.tapCreate(
+    tap: .cgSessionEventTap,
+    place: .headInsertEventTap,
+    options: .listenOnly,
+    eventsOfInterest: mask,
+    callback: { _, type, event, userInfo in
+      guard type == .keyDown, let userInfo = userInfo else {
+        return Unmanaged.passUnretained(event)
+      }
+      let buf = Unmanaged<KeyCaptureBuffer>.fromOpaque(userInfo).takeUnretainedValue()
+      let focus = inspectFocusedElement()
+      if focus.isSecure {
+        buf.skippedSecure = true
+        return Unmanaged.passUnretained(event)
+      }
+      let flags = event.flags
+      if flags.contains(.maskCommand) || flags.contains(.maskControl) {
+        return Unmanaged.passUnretained(event)
+      }
+      var length = 0
+      var chars = [UniChar](repeating: 0, count: 16)
+      event.keyboardGetUnicodeString(maxStringLength: 16, actualStringLength: &length, unicodeString: &chars)
+      if length > 0 {
+        let s = String(utf16CodeUnits: chars, count: length)
+        for ch in s {
+          if ch == "\u{8}" || ch == "\u{7f}" {
+            if !buf.chars.isEmpty { buf.chars.removeLast() }
+          } else if ch == "\r" {
+            buf.chars.append("\n")
+            buf.keyCount += 1
+          } else if !ch.isNewline && ch.asciiValue != nil && ch.asciiValue! < 32 {
+            continue
+          } else {
+            buf.chars.append(ch)
+            buf.keyCount += 1
+          }
+        }
+      }
+      return Unmanaged.passUnretained(event)
+    },
+    userInfo: ptr
+  ) else {
+    printJson(
+      KeyWatchOutput(
+        listenAccess: false,
+        skippedSecure: false,
+        keyCount: 0,
+        text: "",
+        frontmostApp: win.frontmostApp,
+        windowTitle: win.windowTitle
+      )
+    )
+    return
+  }
+
+  let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+  CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .defaultMode)
+  CGEvent.tapEnable(tap: tap, enable: true)
+  CFRunLoopRunInMode(.defaultMode, max(0.05, min(durationSec, 30.0)), false)
+  CGEvent.tapEnable(tap: tap, enable: false)
+
+  let endWin = currentWindowMetadata()
+  printJson(
+    KeyWatchOutput(
+      listenAccess: true,
+      skippedSecure: buffer.skippedSecure,
+      keyCount: buffer.keyCount,
+      text: buffer.chars,
+      frontmostApp: endWin.frontmostApp ?? win.frontmostApp,
+      windowTitle: endWin.windowTitle ?? win.windowTitle
+    )
+  )
 }
 
 func currentWindowMetadata() -> WindowMetadata {
@@ -190,7 +359,7 @@ func handleRenderTextImage(outPath: String, text: String) {
 
 let args = CommandLine.arguments
 guard args.count >= 2 else {
-  fputs("Usage: gadget-sensory <clipboard|window-info|ocr <imgPath>|render-text-image <outPath> <text>>\n", stderr)
+  fputs("Usage: gadget-sensory <clipboard|window-info|focused-text|watch-keys [sec]|ocr <imgPath>|render-text-image <outPath> <text>>\n", stderr)
   exit(1)
 }
 
@@ -199,6 +368,11 @@ case "clipboard":
   handleClipboard()
 case "window-info":
   printJson(currentWindowMetadata())
+case "focused-text":
+  handleFocusedText()
+case "watch-keys":
+  let sec = args.count >= 3 ? (Double(args[2]) ?? 1.0) : 1.0
+  handleWatchKeys(durationSec: sec)
 case "ocr":
   guard args.count >= 3 else {
     fputs("Usage: gadget-sensory ocr <imgPath>\n", stderr)

@@ -90,7 +90,6 @@ test("ask-agent: questions count, requests phrased as questions do not", () => {
   assert.equal(isQuestion("Do not address my recent prompt until you've successfully ran all tests across Node and Python."), false);
   assert.equal(isQuestion("My Gemini credits are almost depleted. Can you delegate the rest of the task, please?"), false);
   assert.equal(isQuestion("Delete everything. Stop. Delete all the stuff you've done. Can you explain to me why you thought it was a good idea to add the fake stuff in there?"), false);
-  assert.equal(isQuestion("Nothing works on my phone. OK, did you lie today? Did you actually test anything on any of the harnesses or the emulator?"), false);
   assert.equal(isQuestion("<send_user_message_question_reply> [{\"question\":\"Is this the full article?\"}]"), false);
 });
 

@@ -163,24 +163,21 @@ function firstPositional(args: string[], valueOpts: Set<string>): string | undef
 
 const SYSTEM_REPLY_TAG = /^<(send_user_message_question_reply|external_codex_apps_|environment_context|permissions|collaboration_mode|turn_aborted)\b/i;
 
-const RHETORICAL_SCOLDING =
-  /\b(did you lie|you['’]?re lying|you lied|how could you|what the hell|why would you|so you['’]?re telling me|i want a refund|burn it all down|delete everything|did you (actually|really|even|set up|check|push|run|test)\b|why (did|do|don['’]?t|are) you\b|what are you (doing|waiting|running)\b|what task are you\b|who is your implementation agent\b|are you using .* subagents\b|how did you imagine\b|do you (want to know|care|prefer)\b)/i;
-
 const INTERROGATIVE_START =
   /^(what|how|why|where|when|which|who|whose|is|are|does|do(?!\s+not\b|n['’]?t\b)|did|should|has|have)\b/i;
 
 const POLITE_REQUEST_OR_IMPERATIVE =
   /^(can|could|would|will) you\b|^please\b|^do\s+not\b|^don['’]?t\b/i;
 
-// ASK_AGENT: an owner turn in a coding-agent session that asks a genuine information-seeking question.
-// Requests phrased as questions ("can you fix X?"), system reply tags, imperatives ("Do not..."),
-// and rhetorical complaints/scolding directed at the agent are not seeking.
+// ASK_AGENT: an owner turn in a coding-agent session that asks a question (AGENTS.md 6.1).
+// Requests phrased as questions ("can you fix X?"), negative imperatives ("Do not..."),
+// and system reply tags are not seeking. Everything else (whether a question is worth
+// surfacing on) is learned from episodes and labels by Anticipator, never hand-filtered here.
 export function isQuestion(text: string): boolean {
   const head = text.trim().slice(0, 500);
   if (!head) return false;
   if (SYSTEM_REPLY_TAG.test(head)) return false;
   if (POLITE_REQUEST_OR_IMPERATIVE.test(head)) return false;
-  if (RHETORICAL_SCOLDING.test(head)) return false;
 
   const sentences = head
     .split(/(?<=[.!?])\s+/)

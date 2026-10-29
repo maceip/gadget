@@ -5,6 +5,7 @@ import { findAntigravityTranscripts, parseAntigravityTranscript } from "./parser
 import { parseChromeCapture, parseChromeHistory, discoverChromiumHistoryFiles } from "./parsers/chrome.js";
 import { parseClipboardCapture } from "./parsers/clipboard.js";
 import { parseCodexSession } from "./parsers/codex.js";
+import { parseAudioCapture, parseKeyboardCapture, parseScreenCapture } from "./parsers/sensory.js";
 import { censusFiles, listFiles } from "./parsers/files.js";
 import { assertOutsideRepo } from "./paths.js";
 import { discoverRepos, readGitRepo } from "./parsers/git.js";
@@ -90,6 +91,24 @@ export function ingest(cfg: MinerConfig): IngestSummary {
     if (existsSync(clipboardCapturePath)) {
       const r = parseClipboardCapture(readFileSync(clipboardCapturePath, "utf8"), clipboardCapturePath);
       add("clipboard", clipboardCapturePath, r.events, r.counts);
+    }
+
+    const screenCapturePath = join(dirname(cfg.zshHook), "screen.jsonl");
+    if (existsSync(screenCapturePath)) {
+      const r = parseScreenCapture(readFileSync(screenCapturePath, "utf8"), screenCapturePath);
+      add("screen", screenCapturePath, r.events, r.counts);
+    }
+
+    const audioCapturePath = join(dirname(cfg.zshHook), "audio.jsonl");
+    if (existsSync(audioCapturePath)) {
+      const r = parseAudioCapture(readFileSync(audioCapturePath, "utf8"), audioCapturePath);
+      add("audio", audioCapturePath, r.events, r.counts);
+    }
+
+    const keyboardCapturePath = join(dirname(cfg.zshHook), "keyboard.jsonl");
+    if (existsSync(keyboardCapturePath)) {
+      const r = parseKeyboardCapture(readFileSync(keyboardCapturePath, "utf8"), keyboardCapturePath);
+      add("keyboard", keyboardCapturePath, r.events, r.counts);
     }
 
     const { files: histories, unreadableRoots } = discoverChromiumHistoryFiles(cfg.chromiumRoots);

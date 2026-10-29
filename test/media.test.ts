@@ -1,16 +1,22 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { listAudioDevices, parseAvFoundationDeviceList } from "../src/media/audio_recorder.js";
 import { hasConcealedPasteboardType, readSafeClipboard } from "../src/media/clipboard.js";
+import { readFocusedTextSafe, watchKeysBurst } from "../src/media/keyboard.js";
 import { ocrImage, renderTextImage } from "../src/media/screen.js";
 import { findWhisperModel, transcribeAudio } from "../src/media/stt.js";
 import { listVoices, synthesizeSpeech } from "../src/media/tts.js";
+import { defaultConfig } from "../src/miner/config.js";
 import { buildEpisodes } from "../src/miner/episodes.js";
 import { parseClipboardCapture } from "../src/miner/parsers/clipboard.js";
+import { parseAudioCapture, parseKeyboardCapture, parseScreenCapture } from "../src/miner/parsers/sensory.js";
 import { withSeeks } from "../src/miner/seek.js";
+import { EventStore } from "../src/miner/store.js";
+import { CalibratedAnticipator } from "../src/runtime/anticipator.js";
+import { AmbientCatalogDaemon } from "../src/runtime/daemon.js";
 
 test("TTS + Local Whisper STT round-trip: say synthesizes 16kHz WAV and whisper-cli transcribes it", (t) => {
   if (process.platform !== "darwin") {
@@ -175,4 +181,102 @@ test("Safe clipboard capture skips concealed password-manager types and resolves
   assert.equal(episodes.length, 1);
   assert.equal(episodes[0]?.resolution?.kind, "PASTE_FROM_SOURCE");
   assert.equal(episodes[0]?.resolution?.answerSpan, "--wasm-tier-up=false");
+});
+
+test("AmbientCatalogDaemon & sensory parsers: screen, audio, keyboard, and learned episode label log-odds", () => {
+  const dir = mkdtempSync(join(tmpdir(), "gadget-daemon-test-"));
+  try {
+    if (process.platform === "darwin") {
+      const focus = readFocusedTextSafe();
+      assert.equal(typeof focus.trusted, "boolean");
+      assert.equal(typeof focus.skippedSecure, "boolean");
+      const keys = watchKeysBurst({ durationSec: 0.05 });
+      assert.equal(typeof keys.listenAccess, "boolean");
+    }
+
+    const screenRaw = [
+      JSON.stringify({ ts: 1000, frontmostApp: "Cursor", windowTitle: "store.ts", text: "Error: SQLITE_BUSY", lineCount: 1 }),
+      JSON.stringify({ ts: 2000, frontmostApp: "Cursor", windowTitle: "store.ts", text: "Error: SQLITE_BUSY", lineCount: 1 }),
+    ].join("\n");
+    const sParsed = parseScreenCapture(screenRaw, "/tmp/screen.jsonl");
+    assert.equal(sParsed.counts.parsed, 1);
+    assert.equal(sParsed.counts.skipped.unchanged_screen, 1);
+
+    const audioRaw = [
+      JSON.stringify({ ts: 1500, transcript: "[BLANK_AUDIO]" }),
+      JSON.stringify({ ts: 2500, transcript: "check the dynamic workflow runtime harness in ZCode" }),
+    ].join("\n");
+    const aParsed = parseAudioCapture(audioRaw, "/tmp/audio.jsonl");
+    assert.equal(aParsed.counts.parsed, 1);
+    assert.equal(aParsed.counts.skipped.silence_or_empty, 1);
+
+    const kbRaw = [
+      JSON.stringify({ ts: 3000, skippedSecure: true, text: "hunter2" }),
+      JSON.stringify({ ts: 3500, kind: "keystrokes", frontmostApp: "iTerm2", text: "rg --wasm-tier-up" }),
+    ].join("\n");
+    const kParsed = parseKeyboardCapture(kbRaw, "/tmp/keyboard.jsonl");
+    assert.equal(kParsed.counts.parsed, 1);
+    assert.equal(kParsed.counts.skipped.secure_field, 1);
+
+    const cfg = defaultConfig(dir);
+    const captureDir = join(dir, ".gadget", "capture");
+    writeFileSync(join(dir, ".zshrc"), "");
+    const daemon = new AmbientCatalogDaemon(cfg, {
+      enableScreen: false,
+      enableClipboard: false,
+      enableKeyboard: false,
+      enableAudio: false,
+    });
+    // Pre-populate capture files and run a tick
+    daemon.runTick();
+    writeFileSync(join(captureDir, "screen.jsonl"), screenRaw + "\n");
+    writeFileSync(join(captureDir, "audio.jsonl"), audioRaw + "\n");
+    writeFileSync(join(captureDir, "keyboard.jsonl"), kbRaw + "\n");
+    const st = daemon.runTick();
+    assert.equal(st.countsBySource.screen, 1);
+    assert.equal(st.countsBySource.audio, 1);
+    assert.equal(st.countsBySource.keyboard, 1);
+
+    const store = new EventStore(cfg.dbPath, { readOnly: true });
+    try {
+      const hits = store.searchBefore('"dynamic" AND "workflow"', 999_999, 5);
+      assert.equal(hits.length, 1);
+      assert.equal(hits[0]?.source, "audio");
+
+      // Verify learned log-odds from episodeLabels without hand-written trigger rules
+      const all = store.allEventsSorted();
+      const firstId = all[0]!.eventId;
+      const fakeEpPos = {
+        episodeId: "ep-pos",
+        contextEventIds: [firstId],
+        seekStartMs: 5000,
+        seekActions: [{ kind: "ASK_AGENT" as const, query: "sqlite_busy lock", eventId: firstId }],
+      };
+      const fakeEpNeg = {
+        episodeId: "ep-neg",
+        contextEventIds: [firstId],
+        seekStartMs: 5000,
+        seekActions: [{ kind: "ASK_AGENT" as const, query: "noisy complaint token", eventId: firstId }],
+      };
+      const labels = new Map([
+        ["ep-pos", { realSeeking: true }],
+        ["ep-neg", { realSeeking: false }],
+      ]);
+      const antPos = new CalibratedAnticipator(store, {
+        priorEpisodes: [fakeEpPos],
+        episodeLabels: labels,
+      });
+      const antNeg = new CalibratedAnticipator(store, {
+        priorEpisodes: [fakeEpNeg],
+        episodeLabels: labels,
+      });
+      const scorePos = antPos.score({ endMs: 10_000, eventIds: [firstId] }).pSeek;
+      const scoreNeg = antNeg.score({ endMs: 10_000, eventIds: [firstId] }).pSeek;
+      assert.ok(scorePos > scoreNeg, `expected positive label score (${scorePos}) > negative label score (${scoreNeg})`);
+    } finally {
+      store.close();
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

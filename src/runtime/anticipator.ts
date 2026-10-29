@@ -38,17 +38,30 @@ const GENERIC_COMMANDS = new Set([
   "ls",
 ]);
 
+export interface EpisodeLabel {
+  realSeeking: boolean;
+  answerInData?: boolean;
+}
+
 export interface AnticipatorOptions {
   threshold?: number;
   defaultHorizonMs?: number;
   priorEpisodes?: SeekingEpisode[];
+  episodeLabels?: ReadonlyMap<string, EpisodeLabel>;
 }
 
 export class CalibratedAnticipator implements Anticipator {
   readonly threshold: number;
   readonly defaultHorizonMs: number;
   private readonly priorEpisodes: SeekingEpisode[];
-  private readonly precomputedEpisodeTokens: Array<{ seekStartMs: number; tokens: string[] }>;
+  private readonly episodeLabels: ReadonlyMap<string, EpisodeLabel>;
+  private readonly precomputedEpisodeTokens: Array<{
+    episodeId: string;
+    seekStartMs: number;
+    tokens: string[];
+    contextTokens: string[];
+    realSeeking: boolean;
+  }>;
 
   constructor(
     private readonly store: EventStore,
@@ -57,10 +70,25 @@ export class CalibratedAnticipator implements Anticipator {
     this.threshold = opts.threshold ?? 0.45;
     this.defaultHorizonMs = opts.defaultHorizonMs ?? 5 * 60 * 1000;
     this.priorEpisodes = opts.priorEpisodes ?? [];
-    this.precomputedEpisodeTokens = this.priorEpisodes.map((ep) => ({
-      seekStartMs: ep.seekStartMs,
-      tokens: ep.seekActions.flatMap((a) => keyTokens(a.query, a.kind)),
-    }));
+    this.episodeLabels = opts.episodeLabels ?? new Map();
+    this.precomputedEpisodeTokens = this.priorEpisodes.map((ep) => {
+      const label = this.episodeLabels.get(ep.episodeId);
+      const ctxTokens: string[] = [];
+      for (const id of ep.contextEventIds) {
+        const ev = this.store.getEventById(id);
+        if (ev) ctxTokens.push(...keyTokens(ev.contentText, "ASK_AGENT"));
+      }
+      for (const a of ep.seekActions) {
+        ctxTokens.push(...keyTokens(a.query, a.kind));
+      }
+      return {
+        episodeId: ep.episodeId,
+        seekStartMs: ep.seekStartMs,
+        tokens: ep.seekActions.flatMap((a) => keyTokens(a.query, a.kind)),
+        contextTokens: [...new Set(ctxTokens)],
+        realSeeking: label ? label.realSeeking : true,
+      };
+    });
   }
 
   score(ctx: ContextWindow): { pSeek: number; horizonMs: number } {
@@ -74,8 +102,11 @@ export class CalibratedAnticipator implements Anticipator {
     let hasUserOrShellError = false;
     let hasSpecificToken = false;
     let hasHistoricalTrigger = false;
+    let learnedLogOddsDelta = 0;
 
     const historicalTriggerTokens = this.learnedTriggerTokensBefore(ctx.endMs);
+    const tokenLogOdds = this.learnedTokenLogOddsBefore(ctx.endMs);
+    const seenWindowTokens = new Set<string>();
 
     for (const ev of events) {
       const meta = parseMeta(ev.metadataJson);
@@ -97,6 +128,12 @@ export class CalibratedAnticipator implements Anticipator {
       if (tokens.some((t) => historicalTriggerTokens.has(t))) {
         hasHistoricalTrigger = true;
       }
+      for (const t of tokens) {
+        if (!seenWindowTokens.has(t)) {
+          seenWindowTokens.add(t);
+          learnedLogOddsDelta += tokenLogOdds.get(t) ?? 0;
+        }
+      }
     }
 
     if (hasFailure) logit += 1.9;
@@ -104,6 +141,7 @@ export class CalibratedAnticipator implements Anticipator {
     if (hasUserTurn && hasAssistantTurn) logit += 1.1;
     if (hasSpecificToken && (hasFailure || hasUserTurn)) logit += 0.5;
     if (hasHistoricalTrigger && (hasFailure || hasUserTurn)) logit += 0.5;
+    logit += Math.max(-2.5, Math.min(2.5, learnedLogOddsDelta));
 
     const pSeek = Number((1 / (1 + Math.exp(-logit))).toFixed(4));
     return { pSeek, horizonMs: this.defaultHorizonMs };
@@ -184,8 +222,40 @@ export class CalibratedAnticipator implements Anticipator {
   private learnedTriggerTokensBefore(asOfMs: number): Set<string> {
     const out = new Set<string>();
     for (const ep of this.precomputedEpisodeTokens) {
-      if (ep.seekStartMs >= asOfMs) continue;
+      if (ep.seekStartMs >= asOfMs || !ep.realSeeking) continue;
       for (const t of ep.tokens) out.add(t);
+    }
+    return out;
+  }
+
+  // Laplace-smoothed log-odds learned from labeled episodes strictly before asOfMs.
+  // Positive (`realSeeking: true`) vs negative (`realSeeking: false`) episodes shift
+  // token weights without hand-written trigger rules.
+  private learnedTokenLogOddsBefore(asOfMs: number): Map<string, number> {
+    const posCounts = new Map<string, number>();
+    const negCounts = new Map<string, number>();
+    let posTotal = 0;
+    let negTotal = 0;
+
+    for (const ep of this.precomputedEpisodeTokens) {
+      if (ep.seekStartMs >= asOfMs) continue;
+      if (!this.episodeLabels.has(ep.episodeId)) continue;
+      if (ep.realSeeking) {
+        posTotal++;
+        for (const t of ep.contextTokens) posCounts.set(t, (posCounts.get(t) ?? 0) + 1);
+      } else {
+        negTotal++;
+        for (const t of ep.contextTokens) negCounts.set(t, (negCounts.get(t) ?? 0) + 1);
+      }
+    }
+
+    const out = new Map<string, number>();
+    if (posTotal === 0 && negTotal === 0) return out;
+    const allTokens = new Set([...posCounts.keys(), ...negCounts.keys()]);
+    for (const t of allTokens) {
+      const pPos = ((posCounts.get(t) ?? 0) + 1) / (posTotal + 2);
+      const pNeg = ((negCounts.get(t) ?? 0) + 1) / (negTotal + 2);
+      out.set(t, Math.log(pPos / pNeg));
     }
     return out;
   }

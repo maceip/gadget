@@ -191,6 +191,9 @@ export const INJECTED_CONTEXT_TAGS = new Set([
   "subagent_notification",
   "additional_metadata",
   "user_settings_change",
+  "send_user_message_question_reply",
+  "external_codex_apps_writing_block_edits",
+  "external_codex_apps_open_page",
 ]);
 
 // Removes complete tool-injected <tag>...</tag> blocks at the start of a message. A message
