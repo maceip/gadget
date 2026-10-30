@@ -2,8 +2,43 @@
 // Anything surfaced or written to the brief must pass verifyClaim. No LLM in this path.
 
 import type { EventStore } from "../miner/store.js";
-import { verifyEntitiesAgainstSources } from "../triggers/memoir_saliency_guard.js";
 import type { Claim, Evidence, Hit } from "./types.js";
+
+const STOPWORD_PROPER = new Set([
+  "The", "This", "That", "These", "Those", "When", "Where", "What", "Why", "How",
+  "If", "In", "On", "At", "For", "To", "From", "With", "By", "And", "But", "Or",
+  "Note", "Warning", "Error", "Source", "Recall", "Monday", "Tuesday", "Wednesday",
+  "Thursday", "Friday", "Saturday", "Sunday",
+]);
+
+function extractStructuredEntities(text: string): string[] {
+  const entities = new Set<string>();
+  for (const m of text.match(/--[a-zA-Z0-9][a-zA-Z0-9_=-]*/g) ?? []) entities.add(m);
+  for (const m of text.matchAll(/["`']([^"`'\r\n]{3,80})["`']/g)) {
+    if (m[1]) entities.add(m[1].trim());
+  }
+  for (const m of text.match(/(?:https?:\/\/[^\s)"'`]+|(?:\/|src\/|test\/|lib\/)[a-zA-Z0-9_./-]+\.[a-zA-Z0-9]+)/g) ?? []) {
+    entities.add(m);
+  }
+  for (const m of text.match(/\b[A-Z][a-zA-Z0-9]+(?:\s+[A-Z][a-zA-Z0-9]+)*\b/g) ?? []) {
+    if (!STOPWORD_PROPER.has(m) && m.length >= 3) entities.add(m);
+  }
+  for (const m of text.match(/(?:\$\d[\d,.]*|\b\d{4}-\d{2}-\d{2}\b|\b\d+(?:\.\d+)?%)/g) ?? []) {
+    entities.add(m);
+  }
+  return [...entities];
+}
+
+function verifyEntitiesAgainstSources(
+  generatedText: string,
+  sourceTexts: ReadonlyArray<string>,
+): { passed: boolean; hallucinatedEntities: string[] } {
+  const extractedEntities = extractStructuredEntities(generatedText);
+  if (extractedEntities.length === 0) return { passed: true, hallucinatedEntities: [] };
+  const combinedLower = sourceTexts.join("\n").toLowerCase();
+  const hallucinatedEntities = extractedEntities.filter((e) => !combinedLower.includes(e.toLowerCase()));
+  return { passed: hallucinatedEntities.length === 0, hallucinatedEntities };
+}
 
 const CODE_OR_STATE_PATTERN =
   /`[^`]+`|--[a-z0-9_-]+|\b(src\/|test\/|lib\/|[a-z0-9_-]+\.(ts|js|mjs|py|rs|go|swift|sh|json|toml|yaml|yml))\b|\b(commit|branch|HEAD|flag|config|env|port)\b/i;

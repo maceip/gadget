@@ -10,7 +10,10 @@ export type Source =
   | "clipboard"
   | "screen"
   | "audio"
-  | "keyboard";
+  | "keyboard"
+  | "android"
+  | "messages"
+  | "calendar";
 
 export type SeekKind = "WEB_SEARCH" | "GREP" | "GIT_ARCHAEOLOGY" | "HELP_LOOKUP" | "ASK_AGENT";
 

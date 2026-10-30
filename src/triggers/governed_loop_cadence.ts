@@ -11,7 +11,27 @@
 //    - Permission policy per (actionKind, target): ALLOW_ONCE | ALWAYS_ALLOW | REFUSE.
 
 import { createHash } from "node:crypto";
-import { inActiveWindow } from "./dsh_self_trigger.js";
+
+function parseHm(str: string): { h: number; m: number } {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(str || "").trim());
+  if (!m) throw new Error(`Invalid HH:MM time: ${str}`);
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (h < 0 || h > 23 || min < 0 || min > 59) {
+    throw new Error(`Out-of-range HH:MM time: ${str}`);
+  }
+  return { h, m: min };
+}
+
+function inActiveWindow(nowDate: Date, fromStr: string, toStr: string): boolean {
+  const from = parseHm(fromStr);
+  const to = parseHm(toStr);
+  const cur = nowDate.getHours() * 60 + nowDate.getMinutes();
+  const a = from.h * 60 + from.m;
+  const b = to.h * 60 + to.m;
+  if (a <= b) return cur >= a && cur <= b;
+  return cur >= a || cur <= b;
+}
 
 // ---------------------------------------------------------------------------
 // 1. AFK-surf/Comma Deterministic State-Predicate Loop

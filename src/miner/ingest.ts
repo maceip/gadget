@@ -5,6 +5,11 @@ import { findAntigravityTranscripts, parseAntigravityTranscript } from "./parser
 import { parseChromeCapture, parseChromeHistory, discoverChromiumHistoryFiles } from "./parsers/chrome.js";
 import { parseClipboardCapture } from "./parsers/clipboard.js";
 import { parseCodexSession } from "./parsers/codex.js";
+import {
+  parseAndroidCapture,
+  parseCalendarCapture,
+  parseMessagesCapture,
+} from "./parsers/messages_calendar.js";
 import { parseAudioCapture, parseKeyboardCapture, parseScreenCapture } from "./parsers/sensory.js";
 import { censusFiles, listFiles } from "./parsers/files.js";
 import { assertOutsideRepo } from "./paths.js";
@@ -109,6 +114,24 @@ export function ingest(cfg: MinerConfig): IngestSummary {
     if (existsSync(keyboardCapturePath)) {
       const r = parseKeyboardCapture(readFileSync(keyboardCapturePath, "utf8"), keyboardCapturePath);
       add("keyboard", keyboardCapturePath, r.events, r.counts);
+    }
+
+    const androidCapturePath = join(dirname(cfg.zshHook), "android.jsonl");
+    if (existsSync(androidCapturePath)) {
+      const r = parseAndroidCapture(readFileSync(androidCapturePath, "utf8"), androidCapturePath);
+      add("android", androidCapturePath, r.events, r.counts);
+    }
+
+    const messagesCapturePath = join(dirname(cfg.zshHook), "messages.jsonl");
+    if (existsSync(messagesCapturePath)) {
+      const r = parseMessagesCapture(readFileSync(messagesCapturePath, "utf8"), messagesCapturePath);
+      add("messages", messagesCapturePath, r.events, r.counts);
+    }
+
+    const calendarCapturePath = join(dirname(cfg.zshHook), "calendar.jsonl");
+    if (existsSync(calendarCapturePath)) {
+      const r = parseCalendarCapture(readFileSync(calendarCapturePath, "utf8"), calendarCapturePath);
+      add("calendar", calendarCapturePath, r.events, r.counts);
     }
 
     const { files: histories, unreadableRoots } = discoverChromiumHistoryFiles(cfg.chromiumRoots);

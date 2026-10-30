@@ -181,6 +181,21 @@ export class RecallMcpServer {
                 required: ["query"],
               },
             },
+            {
+              name: "list_skypanel_cards",
+              description:
+                "List active 2-row Skypanel HUD nuggets (max 3) composed from spoken commitments and proactive context.",
+              inputSchema: {
+                type: "object",
+                properties: {
+                  surface: {
+                    type: "string",
+                    enum: ["desktop", "browser", "mobile"],
+                    description: "Optional active surface filter",
+                  },
+                },
+              },
+            },
           ],
         },
       };
@@ -189,6 +204,25 @@ export class RecallMcpServer {
     if (req.method === "tools/call") {
       const name = req.params?.name;
       const args = (req.params?.arguments ?? {}) as Record<string, unknown>;
+      if (name === "list_skypanel_cards") {
+        const surface =
+          args.surface === "desktop" || args.surface === "browser" || args.surface === "mobile"
+            ? args.surface
+            : undefined;
+        const cards = this.store.listSkypanelCards({
+          status: "PENDING",
+          ...(surface ? { surface } : {}),
+          limit: 3,
+        });
+        return {
+          jsonrpc: "2.0",
+          id: req.id,
+          result: {
+            content: [{ type: "text", text: JSON.stringify(cards, null, 2) }],
+            isError: false,
+          },
+        };
+      }
       if (name !== "recall" || typeof args.query !== "string") {
         return {
           jsonrpc: "2.0",

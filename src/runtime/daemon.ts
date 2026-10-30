@@ -9,18 +9,23 @@ import type { MinerConfig } from "../miner/config.js";
 import { buildEpisodes } from "../miner/episodes.js";
 import { parseChromeCapture } from "../miner/parsers/chrome.js";
 import { parseClipboardCapture } from "../miner/parsers/clipboard.js";
+import {
+  parseAndroidCapture,
+  parseCalendarCapture,
+  parseMessagesCapture,
+} from "../miner/parsers/messages_calendar.js";
 import { parseAudioCapture, parseKeyboardCapture, parseScreenCapture } from "../miner/parsers/sensory.js";
 import { parseZshHook } from "../miner/parsers/zsh_hook.js";
 import { withSeeks } from "../miner/seek.js";
 import { EventStore, type StoredEvent } from "../miner/store.js";
 import type { EpisodicEvent, Seek, SeekingEpisode } from "../miner/types.js";
-import { readLabelsCsv } from "../web/server.js";
 import {
   extractSpokenSlotFromEvent,
   type SpokenSlotRecord,
 } from "../triggers/cosmo_spoken_slots.js";
 import { OpenChronicleEventDispatcher } from "../triggers/desktop_activity_commitments.js";
 import { computeAdaptiveCadenceMs } from "../triggers/governed_loop_cadence.js";
+import { composeSkypanelCard } from "../triggers/skypanel_composer.js";
 import { CalibratedAnticipator, type EpisodeLabel } from "./anticipator.js";
 import { FtsEventsSearcher } from "./searchers.js";
 import { BriefWorkspaceSink } from "./sink.js";
@@ -114,6 +119,9 @@ export class AmbientCatalogDaemon {
     const keyboardPath = join(captureDir, "keyboard.jsonl");
     const audioPath = join(captureDir, "audio.jsonl");
     const chromePath = join(captureDir, "chrome.jsonl");
+    const androidPath = join(captureDir, "android.jsonl");
+    const messagesPath = join(captureDir, "messages.jsonl");
+    const calendarPath = join(captureDir, "calendar.jsonl");
 
     const errors: string[] = [];
     let lastScreenApp: string | null = null;
@@ -238,6 +246,18 @@ export class AmbientCatalogDaemon {
       if (audioRaw !== null) {
         batch.push(...parseAudioCapture(audioRaw, audioPath).events);
       }
+      const androidRaw = this.readIncrementalTail(androidPath, 0);
+      if (androidRaw !== null) {
+        batch.push(...parseAndroidCapture(androidRaw, androidPath).events);
+      }
+      const messagesRaw = this.readIncrementalTail(messagesPath, 0);
+      if (messagesRaw !== null) {
+        batch.push(...parseMessagesCapture(messagesRaw, messagesPath).events);
+      }
+      const calendarRaw = this.readIncrementalTail(calendarPath, 0);
+      if (calendarRaw !== null) {
+        batch.push(...parseCalendarCapture(calendarRaw, calendarPath).events);
+      }
 
       if (batch.length > 0) {
         const added = store.insert(withSeeks(batch));
@@ -288,6 +308,8 @@ export class AmbientCatalogDaemon {
               }
             }
             store.upsertSpokenSlot(slot);
+            const card = composeSkypanelCard(slot, store);
+            store.upsertSkypanelCard(card);
           }
         }
       }
@@ -513,12 +535,17 @@ export function loadLatestLabelsMap(reportsDir: string): Map<string, EpisodeLabe
 export function loadLabelsMapFromFile(labelsCsvPath: string): Map<string, EpisodeLabel> {
   const out = new Map<string, EpisodeLabel>();
   if (!existsSync(labelsCsvPath)) return out;
-  for (const row of readLabelsCsv(labelsCsvPath)) {
-    if (row.real_seeking === "Y" || row.real_seeking === "N") {
-      out.set(row.episode_id, {
-        realSeeking: row.real_seeking === "Y",
-        ...(row.answer_in_my_data === "Y" || row.answer_in_my_data === "N"
-          ? { answerInData: row.answer_in_my_data === "Y" }
+  const lines = readFileSync(labelsCsvPath, "utf8").split("\n").filter(Boolean);
+  for (let i = 1; i < lines.length; i++) {
+    const parts = lines[i]!.split(",");
+    const episodeId = (parts[0] ?? "").trim();
+    const realSeeking = (parts[1] ?? "").trim();
+    const answerInData = (parts[2] ?? "").trim();
+    if (episodeId && (realSeeking === "Y" || realSeeking === "N")) {
+      out.set(episodeId, {
+        realSeeking: realSeeking === "Y",
+        ...(answerInData === "Y" || answerInData === "N"
+          ? { answerInData: answerInData === "Y" }
           : {}),
       });
     }

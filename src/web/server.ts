@@ -1,208 +1,28 @@
-// Local Episode Tagging Workbench & Chrome Extension Capture Server.
+// Local Loopback Skypanel HUD & Capture Server (`src/web/server.ts`).
 // Runs on 127.0.0.1:4321 by default. Never makes outbound network calls.
 
-import { execFileSync } from "node:child_process";
 import {
   appendFileSync,
   chmodSync,
   existsSync,
   mkdirSync,
-  readdirSync,
   readFileSync,
-  statSync,
-  writeFileSync,
 } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { dirname, join } from "node:path";
-import { evaluateCeiling } from "../miner/ceiling.js";
 import type { MinerConfig } from "../miner/config.js";
-import { buildEpisodes } from "../miner/episodes.js";
 import { ingest } from "../miner/ingest.js";
+import { parseAndroidCapture } from "../miner/parsers/messages_calendar.js";
 import { assertOutsideRepo } from "../miner/paths.js";
-import { sampleIndices, writeReport } from "../miner/report.js";
-import { parseMeta } from "../miner/seek.js";
+import { withSeeks } from "../miner/seek.js";
 import { EventStore } from "../miner/store.js";
-import { renderWorkbenchHtml } from "./ui.js";
-
-export interface WorkbenchEpisodeLabel {
-  realSeeking: "" | "Y" | "N";
-  answerInMyData: "" | "Y" | "N";
-  note: string;
-}
-
-export interface WorkbenchHitView {
-  eventId: string;
-  source: string;
-  timestampMs: number;
-  timestampIso: string;
-  sourceUri: string;
-  snippet: string;
-  fullText: string;
-}
-
-export interface WorkbenchEpisodeView {
-  sampleIndex: number;
-  episodeId: string;
-  seekStartMs: number;
-  seekStartIso: string;
-  primaryKind: string;
-  primaryQuery: string;
-  seekActions: Array<{
-    kind: string;
-    query: string;
-    eventId: string;
-    source: string;
-    sourceUri: string;
-  }>;
-  contextEvents: Array<{
-    eventId: string;
-    timeUtc: string;
-    source: string;
-    contentText: string;
-    exit?: number;
-  }>;
-  keyTokens: string[];
-  repeatSeek: boolean;
-  resolutionSummary: string;
-  topHit: WorkbenchHitView | null;
-  topHitOlderThanDay: WorkbenchHitView | null;
-  label: WorkbenchEpisodeLabel;
-}
-
-export interface WorkbenchMetrics {
-  totalSampled: number;
-  labeledCount: number;
-  realSeekingYes: number;
-  realSeekingNo: number;
-  answerInDataYes: number;
-  answerInDataNo: number;
-  phase0GatePassed: boolean;
-  ceilingLocalHit: string;
-  ceilingOlderThanDay: string;
-  repeatSeek: string;
-}
-
-export interface WorkbenchState {
-  reportDir: string;
-  reportPath: string;
-  labelsPath: string;
-  episodes: WorkbenchEpisodeView[];
-  metrics: WorkbenchMetrics;
-  capture: {
-    zshLogPath: string;
-    zshCaptureLines: number;
-    chromeLogPath: string;
-    chromeCaptureLines: number;
-  };
-}
-
-export function parseCsvLine(line: string): string[] {
-  const fields: string[] = [];
-  let cur = "";
-  let inQuotes = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i]!;
-    if (inQuotes) {
-      if (ch === '"') {
-        if (line[i + 1] === '"') {
-          cur += '"';
-          i++;
-        } else {
-          inQuotes = false;
-        }
-      } else {
-        cur += ch;
-      }
-    } else if (ch === '"') {
-      inQuotes = true;
-    } else if (ch === ",") {
-      fields.push(cur);
-      cur = "";
-    } else {
-      cur += ch;
-    }
-  }
-  fields.push(cur);
-  return fields;
-}
-
-export function formatCsvField(s: string): string {
-  const clean = s.replace(/[\r\n]+/g, " ");
-  const safe = /^[=+\-@]/.test(clean) ? `'${clean}` : clean;
-  return /[",]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
-}
-
-export interface LabelsCsvRow {
-  episode_id: string;
-  real_seeking: "" | "Y" | "N";
-  answer_in_my_data: "" | "Y" | "N";
-  note: string;
-}
-
-export function readLabelsCsv(labelsPath: string): LabelsCsvRow[] {
-  if (!existsSync(labelsPath)) return [];
-  const lines = readFileSync(labelsPath, "utf8").split("\n").filter((l) => l.trim().length > 0);
-  if (lines.length <= 1) return [];
-  const rows: LabelsCsvRow[] = [];
-  for (let i = 1; i < lines.length; i++) {
-    const cols = parseCsvLine(lines[i]!);
-    const rs = (cols[1] ?? "").trim().toUpperCase();
-    const ad = (cols[2] ?? "").trim().toUpperCase();
-    rows.push({
-      episode_id: cols[0] ?? "",
-      real_seeking: rs === "Y" || rs === "N" ? rs : "",
-      answer_in_my_data: ad === "Y" || ad === "N" ? ad : "",
-      note: (cols[3] ?? "").replace(/^'(?=[=+\-@])/, ""),
-    });
-  }
-  return rows;
-}
-
-export function writeLabelsCsv(labelsPath: string, rows: LabelsCsvRow[]): void {
-  assertOutsideRepo(labelsPath, "labels.csv");
-  const header = "episode_id,real_seeking_YN,answer_in_my_data_YN,notes";
-  const out = [header];
-  for (const r of rows) {
-    out.push([r.episode_id, r.real_seeking, r.answer_in_my_data, formatCsvField(r.note)].join(","));
-  }
-  writeFileSync(labelsPath, out.join("\n") + "\n", { mode: 0o600 });
-  chmodSync(labelsPath, 0o600);
-}
-
-export function ensureLatestReportDir(cfg: MinerConfig): string {
-  if (!existsSync(cfg.dbPath)) {
-    ingest(cfg);
-  }
-  mkdirSync(cfg.reportsDir, { recursive: true, mode: 0o700 });
-  const existing = readdirSync(cfg.reportsDir)
-    .map((name) => join(cfg.reportsDir, name))
-    .filter((p) => {
-      try {
-        return statSync(p).isDirectory() && existsSync(join(p, "labels.csv"));
-      } catch {
-        return false;
-      }
-    })
-    .sort();
-  if (existing.length > 0) {
-    return existing.at(-1)!;
-  }
-
-  const store = new EventStore(cfg.dbPath, { readOnly: true });
-  try {
-    const events = store.allEventsSorted();
-    const counts = store.readCounts();
-    const episodes = buildEpisodes(events, cfg);
-    const ceiling = evaluateCeiling(episodes, store);
-    const now = new Date();
-    const stamp = now.toISOString().replace(/[:.]/g, "-");
-    const outDir = join(cfg.reportsDir, stamp);
-    writeReport({ cfg, counts, events, episodes, ceiling, generatedAt: now }, outDir);
-    return outDir;
-  } finally {
-    store.close();
-  }
-}
+import { inferActiveSurface, type SkypanelExecutionMode } from "../triggers/skypanel_composer.js";
+import {
+  executeCardOnSpine,
+  reviseCardOnSpine,
+  runFunctionalSpine,
+} from "../triggers/spine.js";
+import { renderSkypanelHtml } from "./skypanel_ui.js";
 
 function countNonEmptyLines(filePath: string): number {
   if (!existsSync(filePath)) return 0;
@@ -216,196 +36,6 @@ function countNonEmptyLines(filePath: string): number {
   } catch {
     return 0;
   }
-}
-
-export function buildWorkbenchState(cfg: MinerConfig, reportDirOverride?: string): WorkbenchState {
-  const reportDir = reportDirOverride ?? ensureLatestReportDir(cfg);
-  const labelsPath = join(reportDir, "labels.csv");
-  const reportPath = join(reportDir, "report.md");
-  const csvRows = readLabelsCsv(labelsPath);
-  const labelByEpisodeId = new Map<string, WorkbenchEpisodeLabel>();
-  for (const r of csvRows) {
-    labelByEpisodeId.set(r.episode_id, {
-      realSeeking: r.real_seeking,
-      answerInMyData: r.answer_in_my_data,
-      note: r.note,
-    });
-  }
-
-  const store = new EventStore(cfg.dbPath, { readOnly: true });
-  try {
-    const events = store.allEventsSorted();
-    const byId = new Map(events.map((e) => [e.eventId, e]));
-    const episodes = buildEpisodes(events, cfg);
-    const ceiling = evaluateCeiling(episodes, store);
-    const evalById = new Map(ceiling.evals.map((e) => [e.episodeId, e]));
-    const picks = sampleIndices(episodes.length, cfg.sampleSize, cfg.seed);
-
-    const hydrateHit = (h: { eventId: string; source: string; timestampMs: number; sourceUri: string; snippet: string } | null): WorkbenchHitView | null => {
-      if (!h) return null;
-      const fullEv = store.getEventById(h.eventId);
-      return {
-        eventId: h.eventId,
-        source: h.source,
-        timestampMs: h.timestampMs,
-        timestampIso: new Date(h.timestampMs).toISOString(),
-        sourceUri: h.sourceUri,
-        snippet: h.snippet,
-        fullText: fullEv ? fullEv.contentText.slice(0, 2000) : h.snippet,
-      };
-    };
-
-    const views: WorkbenchEpisodeView[] = picks.map((epIdx, i) => {
-      const ep = episodes[epIdx]!;
-      const ev = evalById.get(ep.episodeId)!;
-      const firstAction = ep.seekActions[0];
-      const seekActions = ep.seekActions.map((a) => {
-        const srcEv = byId.get(a.eventId);
-        return {
-          kind: a.kind,
-          query: a.query,
-          eventId: a.eventId,
-          source: srcEv?.source ?? "unknown",
-          sourceUri: srcEv?.sourceUri ?? "",
-        };
-      });
-      const contextEvents = ep.contextEventIds.slice(-15).map((cid) => {
-        const fullEv = store.getEventById(cid);
-        const meta = fullEv ? parseMeta(fullEv.metadataJson) : {};
-        return {
-          eventId: cid,
-          timeUtc: fullEv ? new Date(fullEv.timestampMs).toISOString().slice(11, 19) : "",
-          source: fullEv?.source ?? "unknown",
-          contentText: fullEv ? fullEv.contentText.slice(0, 1200) : "",
-          ...(typeof meta.exit === "number" ? { exit: meta.exit } : {}),
-        };
-      });
-
-      const resolutionSummary = ep.resolution
-        ? `${ep.resolution.kind} after ${((ep.costMs ?? 0) / 60000).toFixed(1)} min (${ep.resolution.sourceUri ?? ""})`
-        : "unresolved within window";
-
-      const label = labelByEpisodeId.get(ep.episodeId) ?? {
-        realSeeking: "",
-        answerInMyData: "",
-        note: "",
-      };
-
-      return {
-        sampleIndex: i + 1,
-        episodeId: ep.episodeId,
-        seekStartMs: ep.seekStartMs,
-        seekStartIso: new Date(ep.seekStartMs).toISOString(),
-        primaryKind: firstAction?.kind ?? "",
-        primaryQuery: firstAction?.query ?? "",
-        seekActions,
-        contextEvents,
-        keyTokens: ev.keyTokens,
-        repeatSeek: ev.repeatSeek,
-        resolutionSummary,
-        topHit: hydrateHit(ev.hit),
-        topHitOlderThanDay: hydrateHit(ev.hitOlderThanDay),
-        label,
-      };
-    });
-
-    const pct = (num: number, den: number) => (den === 0 ? "0/0 (n/a)" : `${num}/${den} (${((100 * num) / den).toFixed(1)}%)`);
-    const metrics = computeMetrics(
-      views.map((v) => v.label),
-      pct(ceiling.localHit.num, ceiling.localHit.den),
-      pct(ceiling.localHitOlderThanDay.num, ceiling.localHitOlderThanDay.den),
-      pct(ceiling.repeatSeek.num, ceiling.repeatSeek.den),
-    );
-
-    const chromeLogPath = join(dirname(cfg.zshHook), "chrome.jsonl");
-    return {
-      reportDir,
-      reportPath,
-      labelsPath,
-      episodes: views,
-      metrics,
-      capture: {
-        zshLogPath: cfg.zshHook,
-        zshCaptureLines: countNonEmptyLines(cfg.zshHook),
-        chromeLogPath,
-        chromeCaptureLines: countNonEmptyLines(chromeLogPath),
-      },
-    };
-  } finally {
-    store.close();
-  }
-}
-
-function computeMetrics(
-  labels: WorkbenchEpisodeLabel[],
-  ceilingLocalHit: string,
-  ceilingOlderThanDay: string,
-  repeatSeek: string,
-): WorkbenchMetrics {
-  let labeledCount = 0;
-  let realSeekingYes = 0;
-  let realSeekingNo = 0;
-  let answerInDataYes = 0;
-  let answerInDataNo = 0;
-
-  for (const l of labels) {
-    if (l.realSeeking !== "" && l.answerInMyData !== "") labeledCount++;
-    if (l.realSeeking === "Y") realSeekingYes++;
-    if (l.realSeeking === "N") realSeekingNo++;
-    if (l.answerInMyData === "Y") answerInDataYes++;
-    if (l.answerInMyData === "N") answerInDataNo++;
-  }
-
-  return {
-    totalSampled: labels.length,
-    labeledCount,
-    realSeekingYes,
-    realSeekingNo,
-    answerInDataYes,
-    answerInDataNo,
-    phase0GatePassed: realSeekingYes >= 20,
-    ceilingLocalHit,
-    ceilingOlderThanDay,
-    repeatSeek,
-  };
-}
-
-export function updateEpisodeLabelOnDisk(
-  cfg: MinerConfig,
-  episodeId: string,
-  patch: Partial<WorkbenchEpisodeLabel>,
-  reportDirOverride?: string,
-): { ok: boolean; label: WorkbenchEpisodeLabel; metrics: WorkbenchMetrics } {
-  const reportDir = reportDirOverride ?? ensureLatestReportDir(cfg);
-  const labelsPath = join(reportDir, "labels.csv");
-  const rows = readLabelsCsv(labelsPath);
-  const target = rows.find((r) => r.episode_id === episodeId);
-  if (!target) {
-    throw new Error(`Episode ${episodeId} not found in ${labelsPath}`);
-  }
-  if (patch.realSeeking !== undefined) {
-    const rs = patch.realSeeking.toUpperCase();
-    target.real_seeking = rs === "Y" || rs === "N" ? rs : "";
-  }
-  if (patch.answerInMyData !== undefined) {
-    const ad = patch.answerInMyData.toUpperCase();
-    target.answer_in_my_data = ad === "Y" || ad === "N" ? ad : "";
-  }
-  if (patch.note !== undefined) {
-    target.note = String(patch.note);
-  }
-  writeLabelsCsv(labelsPath, rows);
-
-  const state = buildWorkbenchState(cfg, reportDir);
-  return {
-    ok: true,
-    label: {
-      realSeeking: target.real_seeking,
-      answerInMyData: target.answer_in_my_data,
-      note: target.note,
-    },
-    metrics: state.metrics,
-  };
 }
 
 export function appendChromeCaptureEvents(cfg: MinerConfig, rawEvents: unknown[]): number {
@@ -477,25 +107,12 @@ function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
 }
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
-  // No CORS headers: the workbench page is same-origin and the extension's service worker
-  // has host_permissions, so neither needs them. Any other web page must not read these.
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
   res.end(JSON.stringify(body));
 }
 
-// The only paths the capture extension calls.
 const EXTENSION_PATHS = new Set(["/api/capture/chrome", "/api/shadow/browser", "/api/status"]);
 
-// Every response holds the owner's private data and every POST changes it, so only these
-// callers are served:
-// - Host must name this server on loopback. A web page that points its own domain at
-//   127.0.0.1 (DNS rebinding) sends its own name here and is refused.
-// - Origin, when present, must be this server's own origin, or the capture extension for
-//   the paths it uses. Browsers send Origin on every cross-origin read and on every POST,
-//   so another site's page cannot read state or write labels or capture events.
-// - Sec-Fetch-Site, when present, must be same-origin or none (typed URL), which also
-//   refuses cross-site requests that carry no Origin (an <img> or <script> GET).
-// Clients with no Origin and no Sec-Fetch-Site are local programs, not web pages.
 export function requestAllowed(
   headers: IncomingMessage["headers"],
   port: number,
@@ -503,7 +120,6 @@ export function requestAllowed(
 ): boolean {
   const host = headers.host ?? "";
   const names = ["127.0.0.1", "localhost", "[::1]"];
-  // On port 80, clients send Host (and Origin) without the port.
   const hosts = names.map((n) => `${n}:${port}`).concat(port === 80 ? names : []);
   if (!hosts.includes(host)) return false;
   const origin = headers.origin;
@@ -517,11 +133,16 @@ export function requestAllowed(
 
 export function startWorkbenchServer(
   cfg: MinerConfig,
-  opts: { port?: number; host?: string } = {},
-): Promise<{ server: Server; port: number; url: string; getReportDir: () => string }> {
-  let activeReportDir = ensureLatestReportDir(cfg);
+  opts: { port?: number; host?: string; workspacePath?: string } = {},
+): Promise<{ server: Server; port: number; url: string }> {
+  if (!existsSync(cfg.dbPath)) {
+    mkdirSync(dirname(cfg.dbPath), { recursive: true, mode: 0o700 });
+    const initStore = new EventStore(cfg.dbPath);
+    initStore.close();
+  }
   const host = opts.host ?? "127.0.0.1";
   const requestedPort = opts.port ?? 4321;
+  const workspacePath = opts.workspacePath ?? process.cwd();
 
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     try {
@@ -530,7 +151,7 @@ export function startWorkbenchServer(
       const addr = server.address();
       const listeningPort = typeof addr === "object" && addr ? addr.port : requestedPort;
       if (!requestAllowed(req.headers, listeningPort, pathname)) {
-        sendJson(res, 403, { ok: false, error: "forbidden: not this workbench's own page or capture extension" });
+        sendJson(res, 403, { ok: false, error: "forbidden: not this server's own page or capture extension" });
         return;
       }
 
@@ -539,48 +160,187 @@ export function startWorkbenchServer(
         return;
       }
 
-      if (req.method === "GET" && pathname === "/") {
-        const html = renderWorkbenchHtml();
+      if (req.method === "GET" && (pathname === "/" || pathname === "/skypanel")) {
+        const html = renderSkypanelHtml();
         res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
         res.end(html);
         return;
       }
 
-      if (req.method === "GET" && pathname === "/api/state") {
-        const state = buildWorkbenchState(cfg, activeReportDir);
-        sendJson(res, 200, state);
-        return;
-      }
-
       if (req.method === "GET" && pathname === "/api/status") {
-        const state = buildWorkbenchState(cfg, activeReportDir);
-        sendJson(res, 200, {
-          labeledCount: state.metrics.labeledCount,
-          totalSampled: state.metrics.totalSampled,
-          realSeekingYes: state.metrics.realSeekingYes,
-          answerInDataYes: state.metrics.answerInDataYes,
-          zshCaptureLines: state.capture.zshCaptureLines,
-          chromeCaptureLines: state.capture.chromeCaptureLines,
-        });
+        const chromeLogPath = join(dirname(cfg.zshHook), "chrome.jsonl");
+        const store = new EventStore(cfg.dbPath);
+        try {
+          const cards = store.listSkypanelCards({ limit: 3 });
+          sendJson(res, 200, {
+            ok: true,
+            visibleCardsCount: cards.length,
+            zshCaptureLines: countNonEmptyLines(cfg.zshHook),
+            chromeCaptureLines: countNonEmptyLines(chromeLogPath),
+          });
+        } finally {
+          store.close();
+        }
         return;
       }
 
-      const labelMatch = /^\/api\/episodes\/([^/]+)\/label$/.exec(pathname);
-      if (req.method === "POST" && labelMatch) {
-        const episodeId = decodeURIComponent(labelMatch[1]!);
+      if (req.method === "GET" && pathname === "/api/skypanel") {
+        const store = new EventStore(cfg.dbPath);
+        try {
+          const cards = store.listSkypanelCards({ limit: 3 });
+          const activeSurface = inferActiveSurface(store);
+          sendJson(res, 200, {
+            ok: true,
+            activeSurface,
+            cards,
+          });
+        } finally {
+          store.close();
+        }
+        return;
+      }
+
+      if (req.method === "POST" && pathname === "/api/skypanel/utterance") {
         const body = await readJsonBody(req);
-        const updated = updateEpisodeLabelOnDisk(
-          cfg,
-          episodeId,
-          {
-            realSeeking: typeof body.realSeeking === "string" ? (body.realSeeking as "" | "Y" | "N") : undefined,
-            answerInMyData:
-              typeof body.answerInMyData === "string" ? (body.answerInMyData as "" | "Y" | "N") : undefined,
-            note: typeof body.note === "string" ? body.note : undefined,
-          },
-          activeReportDir,
-        );
-        sendJson(res, 200, updated);
+        const rawText =
+          typeof body.utterance === "string"
+            ? body.utterance
+            : typeof body.text === "string"
+              ? body.text
+              : "";
+        const utterance = rawText.trim();
+        if (!utterance) {
+          sendJson(res, 400, { ok: false, error: "missing utterance" });
+          return;
+        }
+        const store = new EventStore(cfg.dbPath);
+        try {
+          const result = await runFunctionalSpine({
+            store,
+            dbPath: cfg.dbPath,
+            workspacePath,
+            utteranceText: utterance,
+          });
+          sendJson(res, 200, {
+            ok: true,
+            triggered: result.triggered,
+            triggerKind: result.triggerKind,
+            slot: result.slot,
+            card: result.card,
+            visibleCards: result.visibleCards,
+          });
+        } finally {
+          store.close();
+        }
+        return;
+      }
+
+      const modeMatch = /^\/api\/skypanel\/(?:cards\/)?([^/]+)\/mode$/.exec(pathname);
+      if (req.method === "POST" && modeMatch) {
+        const cardId = decodeURIComponent(modeMatch[1]!);
+        const body = await readJsonBody(req);
+        const mode: SkypanelExecutionMode = body.mode === "agent" ? "agent" : "app";
+        const store = new EventStore(cfg.dbPath);
+        try {
+          const card = store.getSkypanelCard(cardId);
+          if (!card) {
+            sendJson(res, 404, { ok: false, error: `Card not found: ${cardId}` });
+            return;
+          }
+          card.selectedMode = mode;
+          card.updatedAtMs = Date.now();
+          store.upsertSkypanelCard(card);
+          sendJson(res, 200, {
+            ok: true,
+            card,
+            visibleCards: store.listSkypanelCards({ limit: 3 }),
+          });
+        } finally {
+          store.close();
+        }
+        return;
+      }
+
+      const reviseMatch = /^\/api\/skypanel\/(?:cards\/)?([^/]+)\/revise$/.exec(pathname);
+      if (req.method === "POST" && reviseMatch) {
+        const cardId = decodeURIComponent(reviseMatch[1]!);
+        const body = await readJsonBody(req);
+        const rawInstruction =
+          typeof body.instruction === "string"
+            ? body.instruction
+            : typeof body.feedback === "string"
+              ? body.feedback
+              : "";
+        const instruction = rawInstruction.trim();
+        if (!instruction) {
+          sendJson(res, 400, { ok: false, error: "missing revision instruction" });
+          return;
+        }
+        const store = new EventStore(cfg.dbPath);
+        try {
+          const updatedCard = await reviseCardOnSpine({
+            store,
+            cardId,
+            instruction,
+            workspacePath,
+          });
+          sendJson(res, 200, {
+            ok: true,
+            card: updatedCard,
+            visibleCards: store.listSkypanelCards({ limit: 3 }),
+          });
+        } finally {
+          store.close();
+        }
+        return;
+      }
+
+      const executeMatch = /^\/api\/skypanel\/(?:cards\/)?([^/]+)\/execute$/.exec(pathname);
+      if (req.method === "POST" && executeMatch) {
+        const cardId = decodeURIComponent(executeMatch[1]!);
+        const body = await readJsonBody(req);
+        const modeOverride =
+          body.mode === "agent" || body.mode === "app"
+            ? (body.mode as SkypanelExecutionMode)
+            : undefined;
+        const store = new EventStore(cfg.dbPath);
+        try {
+          const resExec = await executeCardOnSpine({
+            store,
+            dbPath: cfg.dbPath,
+            cardId,
+            modeOverride,
+            workspacePath,
+          });
+          sendJson(res, 200, {
+            ok: true,
+            card: resExec.card,
+            writtenPaths: resExec.writtenPaths,
+            visibleCards: store.listSkypanelCards({ limit: 3 }),
+          });
+        } finally {
+          store.close();
+        }
+        return;
+      }
+
+      const dismissMatch = /^\/api\/skypanel\/(?:cards\/)?([^/]+)\/dismiss$/.exec(pathname);
+      if (req.method === "POST" && dismissMatch) {
+        const cardId = decodeURIComponent(dismissMatch[1]!);
+        const store = new EventStore(cfg.dbPath);
+        try {
+          const existing = store.getSkypanelCard(cardId);
+          store.dismissSkypanelCard(cardId);
+          if (existing) {
+            store.resolveSpokenSlot(existing.slotId);
+          }
+          sendJson(res, 200, {
+            ok: true,
+            visibleCards: store.listSkypanelCards({ limit: 3 }),
+          });
+        } finally {
+          store.close();
+        }
         return;
       }
 
@@ -592,69 +352,44 @@ export function startWorkbenchServer(
         return;
       }
 
-      if (req.method === "POST" && pathname === "/api/reingest") {
-        const prevRows = readLabelsCsv(join(activeReportDir, "labels.csv"));
-        const prevByEp = new Map(prevRows.map((r) => [r.episode_id, r]));
-
-        ingest(cfg);
-        const store = new EventStore(cfg.dbPath, { readOnly: true });
-        try {
-          const events = store.allEventsSorted();
-          const counts = store.readCounts();
-          const episodes = buildEpisodes(events, cfg);
-          const ceiling = evaluateCeiling(episodes, store);
-          const now = new Date();
-          const stamp = now.toISOString().replace(/[:.]/g, "-");
-          const newDir = join(cfg.reportsDir, stamp);
-          writeReport({ cfg, counts, events, episodes, ceiling, generatedAt: now }, newDir);
-
-          // Carry over existing owner labels by episode_id
-          const newLabelsPath = join(newDir, "labels.csv");
-          const newRows = readLabelsCsv(newLabelsPath);
-          for (const nr of newRows) {
-            const old = prevByEp.get(nr.episode_id);
-            if (old) {
-              nr.real_seeking = old.real_seeking;
-              nr.answer_in_my_data = old.answer_in_my_data;
-              nr.note = old.note;
-            }
-          }
-          writeLabelsCsv(newLabelsPath, newRows);
-          activeReportDir = newDir;
-        } finally {
-          store.close();
+      if (req.method === "POST" && pathname === "/api/capture/android") {
+        const body = await readJsonBody(req);
+        const batch = Array.isArray(body.events) ? body.events : [body];
+        const androidLogPath = join(dirname(cfg.zshHook), "android.jsonl");
+        assertOutsideRepo(androidLogPath, "android capture log");
+        mkdirSync(dirname(androidLogPath), { recursive: true, mode: 0o700 });
+        const lines: string[] = [];
+        for (const raw of batch) {
+          if (!raw || typeof raw !== "object") continue;
+          const ev = raw as Record<string, unknown>;
+          lines.push(
+            JSON.stringify({
+              sender: typeof ev.sender === "string" ? ev.sender : "unknown",
+              ...(typeof ev.phone === "string" ? { phone: ev.phone } : {}),
+              text: typeof ev.text === "string" ? ev.text : "",
+              ...(typeof ev.app === "string" ? { app: ev.app } : {}),
+              timestampMs: typeof ev.timestampMs === "number" ? ev.timestampMs : Date.now(),
+            }),
+          );
         }
-
-        const state = buildWorkbenchState(cfg, activeReportDir);
-        sendJson(res, 200, { ok: true, state });
+        if (lines.length > 0) {
+          appendFileSync(androidLogPath, `${lines.join("\n")}\n`, { mode: 0o600 });
+          chmodSync(androidLogPath, 0o600);
+          const parsed = parseAndroidCapture(lines.join("\n"), androidLogPath);
+          const store = new EventStore(cfg.dbPath);
+          try {
+            store.insert(withSeeks(parsed.events));
+          } finally {
+            store.close();
+          }
+        }
+        sendJson(res, 200, { ok: true, appended: lines.length, ingested: lines.length });
         return;
       }
 
-      if (req.method === "POST" && pathname === "/api/write-status") {
-        const state = buildWorkbenchState(cfg, activeReportDir);
-        let sha = "unknown";
-        try {
-          sha = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
-        } catch {
-          // ignore
-        }
-        const statusMd = [
-          "# Phase 0 Status",
-          "",
-          `- **Commit SHA:** \`${sha}\``,
-          `- **Report directory:** \`${state.reportDir}\``,
-          `- **Repeat-seek rate:** ${state.metrics.repeatSeek}`,
-          `- **Local-hit rate:** ${state.metrics.ceilingLocalHit}`,
-          `- **Local-hit rate (>1 day old):** ${state.metrics.ceilingOlderThanDay}`,
-          `- **Sampled episodes labeled:** ${state.metrics.labeledCount} / ${state.metrics.totalSampled}`,
-          `- **Real seeking (Y):** ${state.metrics.realSeekingYes} / ${state.metrics.labeledCount} (Phase 0 gate >= 20: ${state.metrics.phase0GatePassed ? "PASS" : "PENDING"})`,
-          `- **Answer in my data (Y):** ${state.metrics.answerInDataYes} / ${state.metrics.labeledCount}`,
-          "",
-        ].join("\n");
-        const statusPath = join(dirname(cfg.dbPath), "STATUS.md");
-        assertOutsideRepo(statusPath, "STATUS.md");
-        writeFileSync(statusPath, statusMd, { mode: 0o600 });
-        sendJson(res, 200, { ok: true, statusPath });
+      if (req.method === "POST" && pathname === "/api/reingest") {
+        ingest(cfg);
+        sendJson(res, 200, { ok: true });
         return;
       }
 
@@ -673,7 +408,6 @@ export function startWorkbenchServer(
         server,
         port,
         url: `http://${host}:${port}`,
-        getReportDir: () => activeReportDir,
       });
     });
   });

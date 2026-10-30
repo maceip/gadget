@@ -1,9 +1,9 @@
 {
-  "name": "gadget",
+  "name": "gogogadget",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Ambient recall for one owner on one laptop. See AGENTS.md.",
+  "description": "Local ambient utterance & proactive recall spine with de minimis Skypanel HUD. See AGENTS.md.",
   "engines": {
     "node": ">=22.13"
   },
@@ -12,7 +12,7 @@
     "typecheck": "tsc -p . --noEmit",
     "test": "tsc -p . && node --disable-warning=ExperimentalWarning --test \"dist/test/**/*.test.js\"",
     "test:zsh": "bash test/zsh/run.sh",
-    "guards": "node scripts/guard_no_send.mjs && node scripts/guard_acceptance_manifest.mjs",
+    "guards": "node scripts/guard_no_send.mjs && node scripts/guard_no_fake_or_mock.mjs && node scripts/guard_acceptance_manifest.mjs",
     "mine": "tsc -p . && node --disable-warning=ExperimentalWarning dist/src/miner/cli.js",
     "web": "tsc -p . && node --disable-warning=ExperimentalWarning dist/src/web/cli.js"
   },

@@ -30,7 +30,7 @@ import { BriefWorkspaceSink } from "../src/runtime/sink.js";
 import { VerifiedSurfacer } from "../src/runtime/surfacer.js";
 import { hitToClaim, verifyClaim } from "../src/runtime/verify.js";
 import { evaluateCeiling } from "../src/miner/ceiling.js";
-import { readLabelsCsv, startWorkbenchServer, type WorkbenchState } from "../src/web/server.js";
+import { startWorkbenchServer } from "../src/web/server.js";
 import { fakeHome } from "./fixtures/fake_home.js";
 import { DAY, ev, MIN, stored, T0, tmp } from "./helpers.js";
 
@@ -492,7 +492,7 @@ test("runtime replay, sink, review queue, and MCP recall server end-to-end on fa
   store.close();
 });
 
-test("web tagging workbench & chrome extension capture e2e: tags episodes, persists labels.csv, captures chrome events, and preserves labels across re-ingest", async () => {
+test("skypanel HUD & chrome/android capture server e2e: serves de minimis 2-row HUD, captures chrome/android events, and composes cards from utterances", async () => {
   const home = fakeHome();
   const cfg = {
     ...defaultConfig(home),
@@ -501,44 +501,59 @@ test("web tagging workbench & chrome extension capture e2e: tags episodes, persi
   };
   const started = await startWorkbenchServer(cfg, { port: 0 });
   try {
-    // 1. HTML Workbench renders 3-pane split layout and controls
+    // 1. HTML Skypanel HUD renders 2-row floating HUD and controls
     const htmlResp = await fetch(`${started.url}/`);
     assert.equal(htmlResp.status, 200);
     const html = await htmlResp.text();
-    assert.match(html, /Gadget Phase 0 Tagging Workbench/);
-    assert.match(html, /id="workbench-body"/);
+    assert.match(html, /gogogadget · Skypanel HUD/);
+    assert.match(html, /class="skypanel-shell"/);
 
-    // 2. Initial /api/state returns sampled episodes and unlabeled state
-    const stateResp = await fetch(`${started.url}/api/state`);
-    assert.equal(stateResp.status, 200);
-    const state = (await stateResp.json()) as WorkbenchState;
-    assert.equal(state.episodes.length, 3);
-    assert.equal(state.metrics.labeledCount, 0);
-
-    // 3. Tag episode 1 via POST /api/episodes/:episodeId/label and verify labels.csv on disk
-    const ep1 = state.episodes[0]!;
-    const labelResp = await fetch(`${started.url}/api/episodes/${encodeURIComponent(ep1.episodeId)}/label`, {
+    // 2. Capture Android SMS from Nikesh
+    const androidResp = await fetch(`${started.url}/api/capture/android`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ realSeeking: "Y", answerInMyData: "Y", note: "found in git commit" }),
+      body: JSON.stringify({
+        events: [
+          {
+            sender: "Nikesh",
+            phone: "+14158901234",
+            text: "Hey Ryan, free to catch up this week on the rollout?",
+            app: "Android SMS",
+            timestampMs: T0 + 9 * MIN,
+          },
+        ],
+      }),
     });
-    assert.equal(labelResp.status, 200);
-    const labelJson = (await labelResp.json()) as {
-      ok: boolean;
-      label: { realSeeking: string; answerInMyData: string; note: string };
-      metrics: { labeledCount: number; realSeekingYes: number; answerInDataYes: number };
-    };
-    assert.equal(labelJson.ok, true);
-    assert.equal(labelJson.metrics.labeledCount, 1);
-    assert.equal(labelJson.metrics.realSeekingYes, 1);
-    assert.equal(labelJson.metrics.answerInDataYes, 1);
+    assert.equal(androidResp.status, 200);
+    const androidJson = (await androidResp.json()) as { ok: boolean; appended: number };
+    assert.equal(androidJson.ok, true);
+    assert.equal(androidJson.appended, 1);
 
-    const diskRows = readLabelsCsv(state.labelsPath);
-    assert.equal(statSync(state.labelsPath).mode & 0o777, 0o600);
-    const diskRow1 = diskRows.find((r) => r.episode_id === ep1.episodeId)!;
-    assert.equal(diskRow1.real_seeking, "Y");
-    assert.equal(diskRow1.answer_in_my_data, "Y");
-    assert.equal(diskRow1.note, "found in git commit");
+    // 3. Utterance trigger composes 2-row Skypanel card
+    const uttResp = await fetch(`${started.url}/api/skypanel/utterance`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text: "hey gadget, respond to nikesh and set up a time to meet",
+        activeSurface: "desktop",
+      }),
+    });
+    assert.equal(uttResp.status, 200);
+    const uttJson = (await uttResp.json()) as {
+      ok: boolean;
+      card: {
+        cardId: string;
+        compactLabel: string;
+        sourceIcons: string[];
+        targetIcons: string[];
+        contactName?: string;
+      };
+    };
+    assert.equal(uttJson.ok, true);
+    assert.equal(uttJson.card.compactLabel, "set meeting nikesh");
+    assert.ok(uttJson.card.sourceIcons.includes("android"));
+    assert.ok(uttJson.card.sourceIcons.includes("messages"));
+    assert.ok(uttJson.card.targetIcons.includes("calendar"));
 
     // 4. Chrome Extension capture endpoint writes ~/.gadget/capture/chrome.jsonl (mode 0600)
     const capResp = await fetch(`${started.url}/api/capture/chrome`, {
@@ -566,27 +581,6 @@ test("web tagging workbench & chrome extension capture e2e: tags episodes, persi
     const capJson = (await capResp.json()) as { ok: boolean; appended: number };
     assert.equal(capJson.ok, true);
     assert.equal(capJson.appended, 2);
-
-    // 5. Re-ingest incorporates captured Chrome events AND preserves existing labels in new report
-    const reingestResp = await fetch(`${started.url}/api/reingest`, { method: "POST" });
-    assert.equal(reingestResp.status, 200);
-    const reingestJson = (await reingestResp.json()) as { ok: boolean; state: WorkbenchState };
-    assert.equal(reingestJson.ok, true);
-    assert.equal(reingestJson.state.capture.chromeCaptureLines, 2);
-    assert.equal(reingestJson.state.episodes.length, 4);
-    const preserved = reingestJson.state.episodes.find((e) => e.episodeId === ep1.episodeId)!;
-    assert.equal(preserved.label.realSeeking, "Y");
-    assert.equal(preserved.label.answerInMyData, "Y");
-    assert.equal(preserved.label.note, "found in git commit");
-
-    // 6. Write STATUS.md endpoint
-    const statusResp = await fetch(`${started.url}/api/write-status`, { method: "POST" });
-    assert.equal(statusResp.status, 200);
-    const statusJson = (await statusResp.json()) as { ok: boolean; statusPath: string };
-    assert.equal(statusJson.ok, true);
-    assert.ok(existsSync(statusJson.statusPath));
-    assert.equal(statSync(statusJson.statusPath).mode & 0o777, 0o600);
-    assert.match(readFileSync(statusJson.statusPath, "utf8"), /Sampled episodes labeled:.*1 \/ 4/);
   } finally {
     await new Promise<void>((resolve) => started.server.close(() => resolve()));
   }

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Starts the Gadget Episode Tagging Workbench & Chrome Extension Capture server.
+// Starts the gogogadget Skypanel HUD & Capture server.
 // Usage: npm run web [-- --port 4321]
 
 import { flag, loadConfig } from "../miner/config.js";
@@ -11,8 +11,7 @@ async function startWebCli(argv: string[]): Promise<void> {
   const portArg = flag(argv, "--port") ?? process.env.GADGET_PORT;
   const port = portArg ? Number(portArg) : 4321;
   const started = await startWorkbenchServer(cfg, { port });
-  console.log(`gadget tagging workbench & chrome capture listening at ${started.url}`);
-  console.log(`active report directory: ${started.getReportDir()}`);
+  console.log(`gogogadget skypanel HUD & capture server listening at ${started.url}`);
 }
 
 startWebCli(process.argv.slice(2)).catch((err) => {

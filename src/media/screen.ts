@@ -3,7 +3,23 @@ import { appendFileSync, chmodSync, existsSync, mkdirSync, rmSync } from "node:f
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { findExecutable, runSensoryCommand } from "./native_helper.js";
-import { jaccardTokenSimilarity } from "../triggers/tgl_proactmem_eval.js";
+
+function jaccardTokenSimilarity(a: string, b: string): number {
+  const tokA = new Set(
+    (a.toLowerCase().match(/[\p{L}\p{N}_-]+/gu) ?? []).filter((t) => t.length >= 2 && !/^\d+$/.test(t)),
+  );
+  const tokB = new Set(
+    (b.toLowerCase().match(/[\p{L}\p{N}_-]+/gu) ?? []).filter((t) => t.length >= 2 && !/^\d+$/.test(t)),
+  );
+  if (tokA.size === 0 && tokB.size === 0) return 1;
+  if (tokA.size === 0 || tokB.size === 0) return 0;
+  let inter = 0;
+  for (const t of tokA) {
+    if (tokB.has(t)) inter++;
+  }
+  const union = tokA.size + tokB.size - inter;
+  return union > 0 ? Number((inter / union).toFixed(4)) : 0;
+}
 
 export interface ScreenOcrResult {
   text: string;

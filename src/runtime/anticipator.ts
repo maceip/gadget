@@ -7,8 +7,41 @@ import { parseMeta } from "../miner/seek.js";
 import type { EventStore } from "../miner/store.js";
 import type { EpisodicEvent, SeekingEpisode } from "../miner/types.js";
 import { detectInFlightCommitments } from "../triggers/desktop_activity_commitments.js";
-import { extractGraphEntitiesFromEvent } from "../triggers/tgl_proactmem_eval.js";
 import type { Anticipator, ContextWindow } from "./types.js";
+
+type EntityKind = "file" | "app" | "url" | "person_or_org" | "flag_or_symbol" | "topic";
+
+function extractGraphEntitiesFromEvent(ev: EpisodicEvent): Array<{ kind: EntityKind; value: string }> {
+  const out: Array<{ kind: EntityKind; value: string }> = [];
+  const seen = new Set<string>();
+  const add = (kind: EntityKind, val: string) => {
+    const clean = val.trim();
+    if (clean.length < 3) return;
+    const key = `${kind}:${clean.toLowerCase()}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ kind, value: clean });
+  };
+  const text = ev.contentText;
+  for (const m of text.match(/--[a-zA-Z0-9][a-zA-Z0-9_=-]*/g) ?? []) add("flag_or_symbol", m);
+  for (const m of text.match(/\b[a-z][a-z0-9]*(?:[-_][a-z0-9]+)+\b/g) ?? []) add("flag_or_symbol", m);
+  if (ev.sourceUri.startsWith("http://") || ev.sourceUri.startsWith("https://")) add("url", ev.sourceUri);
+  for (const m of text.match(/https?:\/\/[^\s)"'`]+/g) ?? []) add("url", m);
+  for (const m of text.match(/(?:\/|[a-zA-Z0-9_-]+\/)[a-zA-Z0-9_./-]+\.[a-zA-Z0-9]{1,8}\b/g) ?? []) add("file", m);
+  try {
+    const meta = JSON.parse(ev.metadataJson) as Record<string, unknown>;
+    if (typeof meta.app === "string") add("app", meta.app);
+    if (typeof meta.frontmostApp === "string") add("app", meta.frontmostApp);
+  } catch {
+    // ignore malformed metadata
+  }
+  for (const m of text.match(/\b[A-Z][a-zA-Z0-9]{2,}(?:\s+[A-Z][a-zA-Z0-9]{2,})?\b/g) ?? []) {
+    if (!/^(The|This|When|Where|What|Why|How|Error|Warning|Created|Completed|Command|Process)$/.test(m)) {
+      add("person_or_org", m);
+    }
+  }
+  return out;
+}
 
 const ERROR_SIGNAL =
   /\b(error|failed|failure|exception|unrecognized|unknown option|invalid|cannot find|not found|undefined|enoent|eperm|eacces|segfault|panic)\b/i;

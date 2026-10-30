@@ -25,6 +25,7 @@ import {
   extractSpokenSlotFromEvent,
   SPOKEN_TRIGGER_PREFIXES,
 } from "../triggers/cosmo_spoken_slots.js";
+import { composeSkypanelCard } from "../triggers/skypanel_composer.js";
 import { startWorkbenchServer } from "../web/server.js";
 import { evaluateCeiling, keyTokens } from "./ceiling.js";
 import { flag, loadConfig } from "./config.js";
@@ -127,12 +128,11 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
 
-  if (cmd === "web" || cmd === "label") {
+  if (cmd === "web" || cmd === "skypanel") {
     const portArg = flag(args, "--port") ?? process.env.GADGET_PORT;
     const port = portArg ? Number(portArg) : 4321;
     const started = await startWorkbenchServer(cfg, { port });
-    console.log(`gadget tagging workbench & chrome capture listening at ${started.url}`);
-    console.log(`active report directory: ${started.getReportDir()}`);
+    console.log(`gogogadget skypanel HUD listening at ${started.url}`);
     await new Promise(() => {});
     return 0;
   }
@@ -425,7 +425,9 @@ async function main(argv: string[]): Promise<number> {
           }
         }
         store.upsertSpokenSlot(slot);
-        console.log(JSON.stringify(slot, null, 2));
+        const card = composeSkypanelCard(slot, store);
+        store.upsertSkypanelCard(card);
+        console.log(JSON.stringify({ slot, card }, null, 2));
       } else {
         const slots = store.listSpokenSlots({ limit: 50 });
         console.log(JSON.stringify(slots, null, 2));
