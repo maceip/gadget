@@ -108,3 +108,20 @@ test("guard_acceptance_manifest: the repo's own acceptance/ matches its manifest
   const r = run("guard_acceptance_manifest.mjs", REPO);
   assert.equal(r.status, 0, r.stderr);
 });
+
+test("guard_no_fake_or_mock: clean src/ passes and hardcoded demo names, mocks, or TODOs fail", () => {
+  const cleanRoot = repoWith({ "src/miner/clean.ts": "export const value = 42;\n" });
+  const rClean = run("guard_no_fake_or_mock.mjs", cleanRoot);
+  assert.equal(rClean.status, 0, rClean.stderr);
+  assert.match(rClean.stdout, /guard_no_fake_or_mock: OK/);
+
+  const badName = "Dr." + " Chen";
+  const badMock = "mock" + "Data";
+  const badRoot = repoWith({
+    "src/runtime/fake.ts": `export const contact = "${badName}";\nexport const ${badMock} = [];\n`,
+  });
+  const rBad = run("guard_no_fake_or_mock.mjs", badRoot);
+  assert.equal(rBad.status, 1);
+  assert.match(rBad.stderr, /src\/runtime\/fake\.ts:1: forbidden hardcoded demo contact/);
+  assert.match(rBad.stderr, /src\/runtime\/fake\.ts:2: forbidden mock\/stub\/fake/);
+});
