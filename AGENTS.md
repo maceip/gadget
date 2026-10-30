@@ -1,305 +1,125 @@
-# gadget v1: plan and rules for agents
+# AGENTS.md — Declarative Architecture, Scope Fence & Anti-Deceit Laws
 
-Status as of 2026-10-28: **nothing is built** beyond what has a passing CI run on `main`. The earlier LLM-written `PLAN.md` describes systems that do not exist; it is untrusted and lives in `archive/untrusted-llm-notes/`. Do not cite it as implemented. `ideation.md` is the owner's original note and stays at the root.
+> **READ THIS FIRST.** Every rule in this file exists because a past agent broke it—by faking completion in 3.5 minutes, hardcoding demo strings (`"Dr. Chen"`, `"Sarah"`, `if (query.includes("webview"))`), writing tests that passed while the UI rendered a `6px` 1-character-wide column, testing the wrong target folder, inventing fake arXiv papers, or handing the owner clerical CSV homework. Violating any rule in this file invalidates your work.
 
-## 1. What we are building
+---
 
-An ambient recall system for one user (the owner) on one laptop.
+## 1. Tightened Project Scope (What We Build vs. What Is Forbidden)
 
-It watches the owner's work (shell, browser, coding-agent sessions, git, clipboard), notices when the owner is about to go looking for something, finds the answer in the owner's own data (or the public web, with restrictions), and puts it where the work happens:
+`gogogadget` has **one job**: capture human utterances and ambient context, resolve the relevant people/modalities/schedule/history from real local SQLite data, and surface **at most 1–3 verified, actionable nuggets** in a de minimis 2-row Skypanel HUD and `.gadget/brief.md` so the human or an agent can execute with one click.
 
-- an MCP tool the owner's coding sessions can call, and
-- a sidecar brief file in the workspace.
+### Strictly In Scope (The 4-Stage Functional Spine Only)
+1. **Stage 1 — Local Sensory & History Capture (`src/media/`, `src/miner/`):**
+   - Local mic (`ffmpeg` + `/opt/homebrew/bin/whisper-cli` with `~/Documents/ggml-base.en.bin`), Screen Vision OCR (`macos_sensory.swift`), concealed-safe Clipboard, Keyboard focus/bursts, Zsh hook (`gadget.zsh`), Chrome history/capture, Git reflog/commits, Codex/Antigravity session logs, Android SMS/notification bridge (`~/.gadget/capture/android.jsonl`), and read-only macOS Messages/Calendar snapshots.
+2. **Stage 2 — Dual Trigger Gatekeeper (`src/triggers/`):**
+   - **Path A (Explicit Utterance):** `"Hey Gadget"` (alone) + human-safe prefixes (`"Note to self"`, `"Mental note"`, `"FYI"`, `"PSA"`, `"Remind me"`, `"Bookmark"`, `"Lock it in"`, `"VIP"`, `"ASAP"`, `"ADR"`, `"TBC"`) slotted across Cosmo's 13 Conformer + 6 Regex heads, stapled to the concurrent screen/window/clipboard snapshot.
+   - **Path B (Proactive Anticipator):** `CalibratedAnticipator` scoring live context windows (`zsh_hook` failures, window switches, active repo) using empirical statistics from `EventStore`.
+3. **Stage 3 — Proactive Engine & Deterministic Verification (`src/runtime/`):**
+   - Dynamic entity/contact, source/target modality icon, working-hours, and conflict-free calendar slot resolution from real SQLite events.
+   - Multi-searcher recall (`FtsEventsSearcher`, `GitPickaxeSearcher`, `RepoGrepSearcher`, `SessionsSearcher`) gated by `VerifiedSurfacer` (max 1–3 cards) and deterministic `verifyClaim(asOfMs)`.
+4. **Stage 4 — De Minimis 2-Row Skypanel Surface & Dual-Mode Execution (`src/web/`, `src/mcp/`, `src/runtime/action_agent.ts`):**
+   ```text
+   [ {source modality icons}   <2–5 word nugget label>   {target app icons} ]
+   [                {revise}   {mode: app | agent}       {go go gadget}     ]
+   ```
+   - Routed only to the single surface Ryan is actively using (`desktop`, `browser`, or `mobile`).
+   - `{revise}` recomposes the card in SQLite from natural-language feedback.
+   - `{go go gadget}` executes the card's selected mode:
+     - **Mode 1 (`app` — Native App / Draft Launch):** Stages and opens/copies the concrete `.ics` calendar invite, reply draft, or task file in `~/.gadget/staged/` and `.gadget/brief.md`.
+     - **Mode 2 (`agent` — Scoped Action Agent):** Runs `ActionAgent` over the card's verified brief + local searchers and attaches the verified execution receipt back to the card in SQLite.
 
-It never sends anything to anyone.
+### Strictly Out of Scope (Forbidden Bloat)
+- **NO** multi-pane manual data-labeling dashboards or clerical CSV grading forms (`labels.csv` homework).
+- **NO** standalone academic paper ports, graph databases, or uncalled research experiments sitting in `src/`.
+- **NO** cloud LLM dependencies, external network calls in `src/miner/` or `capture/`, or autonomous outbound message sending.
 
-The core problem is **triggers**: knowing when the owner is about to look for something, and what. Triggers are **learned from the owner's history**, not hand-written.
+---
 
-## 2. Out of scope
+## 2. Absolute Ban on Mocking, Hardcoding, and Fake App Code (`scripts/guard_no_fake_or_mock.mjs`)
 
-Do not build, stub, or describe these as planned:
+**Mocking, hardcoding demo values, or shipping stub/placeholder logic in `src/` is illegal.**
 
-- Device simulator: OSWorld, android_env, RealToSimSyncBridge, REAL_SYNCED / SIM_ONLY planes, NPC counterparties.
-- Phone calls of any kind.
-- Messaging or asking people: outreach, drafts addressed to people, reply handling, "who to ask". The owner does not ask people for help, so there is no data to learn it from.
-- Skill sharing between users. Federated anything (FedALT, FedBiscuit).
-- LLM-built knowledge graph: state_nodes, state_edges, bi-temporal validity, Mem0-style reconciliation, entity extraction, graph retrieval.
-- Hand-written triggers.
-- Phone APK. Deferred until Phase 0 data shows message threads answer a meaningful share of the owner's searches.
+1. **Zero Hardcoded Entities, Contacts, Queries, or Canned Outputs in `src/`:**
+   - **Never** hardcode example names (`"Nikesh"`, `"Dr. Chen"`, `"Sarah"`, `"Alex"`), phone numbers (`"555-"`), fake window titles, canned replies, or keyword boosts (`if (query.includes("webview"))`) anywhere inside `src/`.
+   - Every contact name, modality icon, working-hour window, proposed time slot, and recall quote rendered by `src/` **must** be computed dynamically from the actual input utterance and real rows in `EventStore`.
+2. **Zero Mocks, Stubs, Placeholders, or Dead Controls in App Code:**
+   - **Never** write `mock`, `stub`, `fake`, ` dummy`, `placeholder`, `TODO`, or `not implemented` inside `src/`.
+   - **Never** wire a UI button, mode switch (`app` vs `agent`), `{revise}` input, or `{go go gadget}` trigger to a no-op, `console.log`, or client-only state variable. Every control must mutate and read back real SQLite rows in `EventStore`.
+3. **Zero Fake Machine Learning / Fake Heuristics:**
+   - Do not claim a model or scorer is "calibrated" or "learned" if it is a hardcoded constant table. Any score or working-hour inference must be computed from actual event distributions in SQLite (with documented mathematical formulas).
 
-Adding anything from this list requires the owner's written approval in an issue.
+---
 
-## 3. Rules for agents
+## 3. Clean Repository Structure (`gogogadget`)
 
-These exist because previous agents claimed work was done when it was not.
-
-1. **Done means verified.** A task is done only with the commit sha, the CI run URL on that sha, and the command output. Otherwise write "not verified". "Should work" is not a status.
-2. **Report failures verbatim.** Paste the failing output. Never present a failure as a success with caveats.
-3. **No invented facts.** Do not write numbers, benchmark results, file paths, API names, or citations you did not measure, open, or fetch during this task. A paper citation needs the URL and a verbatim quote. If you don't know, say so.
-4. **Never edit `acceptance/`, `scripts/guard_*`, or `CODEOWNERS`** unless the owner asked for that specific change. They belong to the owner. A PR that touches them must say so in its description, and only the owner merges it. If a test there fails, fix the code. Never skip, disable, or loosen a test to get green.
-5. **LLMs never grade LLM output.** Metrics come from the replay harness against the owner's labels, never from a model judging its own work.
-6. **Stay in scope.** See section 2.
-7. **Status report format:** what you changed, what you ran, the output, what is still unverified.
-
-## 4. Hard safety rules
-
-The system and the agents building it may read all of the owner's data. **Nothing sends.**
-
-- No code path that sends a message, email, post, form submission, or purchase exists in v1. Not behind a flag, not "disabled".
-- Coding agents run as a separate macOS user or in a container with the repo and a read-only copy of the data. Never in the owner's GUI session (Messages, Signal Desktop, logged-in browser).
-- The owner's phone is never adb-connected to a machine where agents run.
-- OAuth tokens, if any, use read-only scopes (e.g. `gmail.readonly`).
-- A browser extension, if built, reads the DOM only: no clicks, input events, or form submits.
-- CI guard `scripts/guard_no_send.mjs` fails the build if send-capable APIs appear anywhere in the codebase, and if network APIs appear under `src/miner/`, `src/capture/`, or `capture/`. The pattern lists live in that script; examples:
-  `osascript`, `application "Messages"`, `gmail.send`, `gmail.compose`, `gmail.modify`, `nodemailer`, `smtplib`, `.click()`, `dispatchEvent(`, `.submit()`, `chrome.debugger`, `addResultsToIntent`, `sendTextMessage`.
-  The guard is a backstop; the separate user account and read-only tokens are the real fence.
-- **External queries are outbound.** A web search or external API query may contain only tokens that appear in public sources (e.g. an error string from a public library). Anything with private names, repo names, people, or internal flags is dropped or goes to the outbox for the owner.
-- **Write-back goes only to gitignored sidecar files** (`<workspace>/.gadget/brief.md`). Never modify tracked files. Proposed source changes are patches in the review queue.
-- **Recalled text is untrusted data.** Web pages and messages can contain prompt injections, and recall feeds coding agents that have a shell. Everything served over MCP or written to the brief is wrapped as quoted data with its source pointer, never as instructions.
-
-## 5. Data model
-
-Raw events, full-text search, mined episodes, outbox, verdicts. No graph.
-
-```typescript
-interface EpisodicEvent {
-  eventId: string;                  // content-addressed (hash of source + offset + content)
-  source: "zsh" | "zsh_hook" | "chrome" | "codex_session" | "antigravity_session" | "git" | "clipboard";
-  timestampMs: number;
-  workspacePath?: string;
-  contentText: string;              // indexed with SQLite FTS5
-  sourceUri: string;                // file:line, session file#turn, commit sha, URL
-  metadataJson: string;
-}
-
-interface SeekingEpisode {
-  episodeId: string;
-  contextEventIds: string[];        // events in the window before seeking began: the trigger
-  seekStartMs: number;
-  seekActions: Array<{
-    kind: "WEB_SEARCH" | "GREP" | "GIT_ARCHAEOLOGY" | "HELP_LOOKUP" | "ASK_AGENT";
-    query: string;
-    eventId: string;
-  }>;
-  resolution?: {
-    kind: "PASTE_FROM_SOURCE" | "COMMAND_SUCCEEDED" | "TEST_PASSED" | "WORK_RESUMED";
-    sourceUri?: string;             // where the answer lived, when known
-    answerSpan?: string;            // exact text, when it was a paste
-    atMs: number;
-  };
-  costMs?: number;                  // seekStart -> resolution; absent when unresolved
-}
-```
-
-Events are append-only. Everything derived (episodes, indexes) can be rebuilt from events; store `minerVersion` on derived rows.
-
-## 6. Triggers
-
-### 6.1 The fixed definition (small, hand-written, does not grow)
-
-We define what "looking for something" and "found it" look like. We do not define what causes it.
-
-| Seek action | Detected from |
-|---|---|
-| `WEB_SEARCH` | Chrome `keyword_search_terms`; search-engine URLs with a query parameter |
-| `GREP` | shell: `grep`, `rg`, `ag`, `ack`, `find`, `fd` |
-| `GIT_ARCHAEOLOGY` | `git log -S/-G/--grep`, `git blame`, `git show <old sha>` |
-| `HELP_LOOKUP` | `man`, `--help`, `tldr`; docs-site visits |
-| `ASK_AGENT` | owner turns in Codex / Antigravity sessions that ask a question |
-
-| Resolution | Detected from |
-|---|---|
-| `PASTE_FROM_SOURCE` | clipboard copy from a source, then paste into the workspace (needs clipboard capture, deferred; see section 11) |
-| `COMMAND_SUCCEEDED` | exit code 0 after failures (zsh hook going forward; Codex tool results for backfill once their format is documented from `probe` output) |
-| `TEST_PASSED` | test command exits 0 after failing |
-| `WORK_RESUMED` | fallback: seeking stops, normal work resumes (weakest; backfill only) |
-
-An episode is a run of seek actions separated by less than `SEEK_GAP` (default 5 min). Context is the `CONTEXT_WINDOW` (default 10 min) before the first seek action. Both live in config; report results at more than one value.
-
-Everything else (when to fire, what to search for, which source to search) is learned from episodes.
-
-### 6.2 Runtime components
-
-```typescript
-interface ContextWindow {
-  endMs: number;
-  eventIds: string[];
-  workspacePath?: string;
-}
-
-interface Anticipator {
-  // Cheap; runs on every new context window.
-  score(ctx: ContextWindow): { pSeek: number; horizonMs: number };
-  // LLM, only above threshold: "what is the owner about to look for?"
-  propose(ctx: ContextWindow): Array<{ query: string; searchers: string[] }>;
-}
-
-interface Hit {
-  quote: string;                    // verbatim from source
-  sourceUri: string;
-  eventId?: string;
-  freshness: "CURRENT" | "SUPERSEDED" | "UNKNOWN";
-  freshnessCheck: string;           // what was run, e.g. "git grep -- --jitless HEAD: 0 hits"
-}
-
-interface Searcher {
-  id: string;                       // "fts_events" | "git_pickaxe" | "repo_grep" | "sessions" | "web"
-  external: boolean;                // true => query leaves the machine; section 4 rules apply
-  search(query: string, asOfMs: number): Promise<Hit[]>;  // asOfMs is mandatory, see section 8
-}
-
-interface Surfacer {
-  // value = relevance x novelty x lead time - interruption cost
-  decide(ctx: ContextWindow, hits: Hit[]): { action: "SURFACE" | "HOLD" | "SILENT"; reason: string };
-}
-
-interface WorkspaceSink {
-  write(workspacePath: string, hits: Hit[], reason: string): Promise<void>;  // .gadget/brief.md, MCP
-}
-```
-
-Rules:
-
-- Searching is cheap and silent; surfacing costs the owner's attention. Guess often, surface rarely.
-- **Novelty:** drop hits already on screen or in the current session.
-- **Freshness:** before surfacing, re-check against current reality (grep HEAD for the flag, check for newer messages). Only `CURRENT` hits are pushed.
-- **Surface a verbatim quote plus source pointer**, never a model-written answer.
-- `Anticipator.score` starts as a zero-shot LLM call with its threshold calibrated on mined episodes. Later it is distilled into a small classifier trained on graded outputs, so it can run on every window at low cost.
-- Which searcher to use is learned from episodes (which sources resolved which contexts). A new searcher is added only if replay shows it resolves episodes the existing ones missed.
-
-## 7. Claim verification
-
-Anything surfaced or written to the brief passes a deterministic check. No LLM in this path.
-
-```typescript
-interface Evidence {
-  sourceEventId: string;
-  quote: string;
-  charStart: number;
-  charEnd: number;
-}
-
-interface Claim {
-  text: string;
-  evidence: Evidence[];             // empty => cannot be surfaced
-}
-
-function verifyClaim(c: Claim, store: EventStore): { passed: boolean; failures: string[] };
-// 1. every quote === event.contentText.slice(charStart, charEnd)
-// 2. the source event exists and is older than the surfacing time
-// 3. freshness check recorded for anything about code or current state
-```
-
-## 8. Replay harness: the only accepted evidence
-
-- A fixture is either a mined episode from the owner's data (local, never committed) or a synthetic fixture (committed, used in CI).
-- Run the pipeline on the context before `seekStartMs`, with `asOfMs = seekStartMs` for every searcher. **An evaluation without this cutoff is invalid**: the index would contain the answer from the future.
-- Metrics, computed by the harness:
+Every file in the repository must belong to one of these directories along the functional spine:
 
 ```text
-hit rate          surfaced item matches where the owner actually found the answer
-lead time         minutes before the owner started looking
-false surfacing   surfacings with no seeking in the following horizon
-answerable miss   answer existed locally, system stayed silent
-lie rate          surfaced claims failing verifyClaim
+gogogadget/
+├── AGENTS.md                        # This charter
+├── package.json                     # Zero external runtime dependencies; Node >= 22.13 (node:sqlite)
+├── tsconfig.json
+├── capture/
+│   └── zsh/gadget.zsh               # Zero-fork zsh preexec/precmd hook
+├── scripts/
+│   ├── guard_no_send.mjs            # Blocks outbound send APIs & unauthorized network calls
+│   ├── guard_no_fake_or_mock.mjs    # Blocks hardcoded demo names, mocks, stubs, and TODOs in src/
+│   └── guard_acceptance_manifest.mjs
+├── src/
+│   ├── media/                       # Stage 1a: Native macOS Sensory & Audio I/O
+│   │   ├── macos_sensory.swift      # Vision OCR, Pasteboard (concealed-safe), AX Focus, CGEvent tap
+│   │   ├── native_helper.ts         # Compiles & runs kernel-sandboxed GadgetSensoryCapture.app
+│   │   ├── audio_recorder.ts        # AVFoundation mic capture
+│   │   ├── stt.ts                   # Local whisper-cli Metal speech-to-text
+│   │   ├── tts.ts                   # Local /usr/bin/say synthesis
+│   │   ├── screen.ts                # Screen capture + Vision OCR
+│   │   ├── clipboard.ts             # Concealed-safe clipboard capture
+│   │   └── keyboard.ts              # Focused text & burst key watcher
+│   ├── miner/                       # Stage 1b: Episodic EventStore & Local Source Parsers
+│   │   ├── store.ts                 # SQLite WAL store (events, events_fts, spoken_slots, skypanel_cards)
+│   │   ├── ingest.ts                # Incremental & batch ingestion
+│   │   ├── parsers/                 # zsh, chrome, codex, antigravity, git, clipboard, sensory, messages_calendar
+│   │   ├── seek.ts, episodes.ts, ceiling.ts, shell.ts, config.ts, event.ts, paths.ts, types.ts
+│   │   └── cli.ts                   # Unified CLI entrypoint
+│   ├── triggers/                    # Stage 2: Utterance & Activity Triggers + Skypanel Composer
+│   │   ├── cosmo_spoken_slots.ts    # "Hey Gadget" + human-safe prefixes + Cosmo 13/19-head slotter
+│   │   ├── skypanel_composer.ts     # Dynamic contact/modality/working-hours resolver + 2-row card composer
+│   │   ├── spine.ts                 # Connected spine: Utterance/Context -> Trigger -> Engine -> Skypanel
+│   │   ├── desktop_activity_commitments.ts
+│   │   └── governed_loop_cadence.ts
+│   ├── runtime/                     # Stage 3: Proactive Recall Engine, Verification, Action Agent & Daemon
+│   │   ├── anticipator.ts           # CalibratedAnticipator
+│   │   ├── searchers.ts             # FtsEventsSearcher, GitPickaxeSearcher, RepoGrepSearcher, SessionsSearcher
+│   │   ├── surfacer.ts              # VerifiedSurfacer (novelty, freshness, interruption budget <= 3 cards)
+│   │   ├── verify.ts                # Deterministic verifyClaim(asOfMs)
+│   │   ├── sink.ts                  # Writes verified <workspace>/.gadget/brief.md
+│   │   ├── action_agent.ts          # Mode 2 Scoped Go-Go-Gadget Action Agent runner & receipt recorder
+│   │   └── daemon.ts                # Continuous AmbientCatalogDaemon loop
+│   ├── mcp/                         # Stage 4a: Agent Pull Surface
+│   │   └── server.ts                # Read-only stdio MCP server (recall, list_skypanel_cards, mark_recall_used)
+│   └── web/                         # Stage 4b: De Minimis Skypanel HUD Surface
+│       ├── skypanel_ui.ts           # 2-row Skypanel HUD (Desktop HUD, Browser Overlay, Mobile Sheet)
+│       ├── server.ts                # Loopback server (127.0.0.1:4321) with Skypanel + capture endpoints
+│       └── cli.ts
+└── test/                            # End-to-End Spine, Guard & Playwright Geometry Suite
 ```
 
-- **Merge rule:** any change to prompts, models, features, or searchers needs a replay run attached to the PR, with no regression.
-- Owner data never leaves the machine and is never committed. CI runs synthetic fixtures; the owner runs real replay locally and records the numbers.
+---
 
-## 9. Review queue
+## 4. Anti-Shitty-Test & Verification Laws
 
-```typescript
-type Verdict =
-  | { kind: "GOOD" }
-  | { kind: "WRONG_FACT"; note: string }          // fabricated or incorrect
-  | { kind: "STALE"; note: string }               // already resolved
-  | { kind: "SHOULD_STAY_SILENT"; note: string }
-  | { kind: "MISSED"; note: string };             // owner was stuck, system said nothing
-```
+A test is **worthless** if it passes while the real user workflow or UI is broken.
 
-Every verdict other than `GOOD`:
-
-1. becomes a locked fixture in `acceptance/` (trace window plus verdict) under the hash manifest;
-2. opens a rework item that closes only when replay of that fixture passes and `verifyClaim` passes;
-3. proposes a scoped rule, shown to the owner in one line.
-
-## 10. Phases
-
-### Phase 0: reset and measure (do this first)
-
-1. Move old notes to `archive/untrusted-llm-notes/`. README line: "Nothing is built. Only items with a passing CI run count."
-2. CI: `scripts/guard_no_send.mjs`, the `acceptance/` hash-manifest check (`scripts/guard_acceptance_manifest.mjs`), and `.github/CODEOWNERS` naming the owner for `acceptance/`, `scripts/guard_*`, `.github/`, and `AGENTS.md`. CODEOWNERS only binds once the owner enables branch protection on `main` with required code-owner review.
-3. Start forward capture now, so data accumulates: a zsh `preexec`/`precmd` hook (`capture/zsh/gadget.zsh`) appending cwd, command, exit code, and start/end time to `~/.gadget/capture/zsh.jsonl`.
-4. History miner (`src/miner/`; TypeScript, Node 22.13+ for unflagged `node:sqlite` with FTS5, no runtime dependencies). Read-only, offline, no network calls:
-   - zsh history: `EXTENDED_HISTORY` format `: <epoch>:<duration>;<cmd>`. Lines without timestamps are skipped and counted, never given guessed times.
-   - Chrome `History` SQLite: copy the file first (locked while Chrome runs). Timestamps are microseconds since 1601-01-01 UTC. Tables: `urls`, `visits`, `keyword_search_terms`.
-   - `~/.codex/sessions/**/*.jsonl`: formats vary by version. Unknown records are counted, not dropped silently.
-   - `~/.gemini/antigravity/brain/*`: format unknown. Inspect real files and document the format before writing a parser.
-   - git: log across configured repo roots (reflog not read yet).
-5. Ceiling report (`report.md`):
-   - per-source event counts and parse-failure counts;
-   - episode count;
-   - **repeat-seek rate:** episodes whose normalized query matches a query from an earlier episode ("you looked for this before"); matches in earlier non-seek content are what the local-hit rate measures, so the two stay separate;
-   - **local-hit rate:** FTS over data older than `seekStartMs` returns a hit containing the query's key tokens;
-   - both rates at more than one `SEEK_GAP` and `CONTEXT_WINDOW` value, so the owner can see how much they depend on the defaults;
-   - 25 random episodes with context excerpt, queries, and top local hit with pointer, for the owner to label Y/N ("the answer was in my data") in `labels.csv`.
-
-Exit: the owner has labeled the 25. If fewer than 20 look like real seeking to the owner, fix detection before Phase 1. Record the numbers in `STATUS.md` with the commit sha.
-
-This phase decides the product: a high ceiling means local recall is the product; a low one means the value is in web search and the plan changes.
-
-### Phase 1: offline anticipation
-
-- Replay harness with the `asOfMs` cutoff.
-- Two baselines:
-  - **upper bound:** search with the owner's actual query at seek start (cheats: it knows the query);
-  - **realistic:** search using context only.
-- Anticipator v0 (zero-shot) with searchers `fts_events`, `git_pickaxe`, `repo_grep`, `sessions`, and `web` (public-token filter).
-- Exit: beats the realistic baseline on the owner's replay, with false surfacing measured and reported.
-
-### Phase 2: live pull
-
-- MCP server exposing `recall(query)` to the owner's coding sessions. Read-only. Logs every call and whether the result was used.
-- Exit: one week of real use with logged usage.
-
-### Phase 3: live push
-
-- Surfacer writes to `.gadget/brief.md` (or a file the session's agent already loads). Review queue with verdicts is live.
-- Turn on only when replay on two weeks of the owner's traces shows false surfacing and stale rates the owner accepts.
-
-### Later, only with owner approval
-
-Read-only phone capture APK; message threads as a searcher.
-
-## 11. Known gaps
-
-- The ceiling is unknown until Phase 0.
-- Being stuck and giving up leaves no seeking trace. `MISSED` verdicts cover it for now.
-- zsh history has no exit codes, so backfilled resolutions are weak. The forward hook fixes this going forward.
-- The Antigravity transcript format is undocumented. The miner only counts those files; `npm run mine -- probe` prints their structure (keys and types, no content) so a parser can be written against real files.
-- The Codex parser is written from the public rollout format and is unverified against the owner's files until `probe` output has been reviewed. Unknown record shapes are counted, not dropped.
-- Codex tool-call records (commands the agent ran, with exit codes) are not parsed yet, so backfilled Codex sessions cannot produce `COMMAND_SUCCEEDED`. Their shape must come from `probe` output on real files, not be guessed.
-- Clipboard capture deferred: a pbpaste poller would log passwords copied from password managers. Needs a macOS-native helper that skips concealed pasteboard types. Not started.
-- Docs-site visits are not yet classified as `HELP_LOOKUP`; only shell `man`, `tldr`, and `--help` are.
-
-## 12. Corrections to earlier notes
-
-Earlier LLM-written notes contain these errors. Do not reuse them.
-
-- ProAgent (arXiv:2512.06721) does not describe ring buffers or "23 buffers". It reports up to 27.7% higher proactive prediction accuracy and 20.5% lower false detection. The ">80% indexing reduction" figure is unsourced.
-- HippoRAG 2 uses Personalized PageRank, not "BM25 + 1-hop traversal". "<15 ms" was never measured.
-- Mem0's operations are ADD / UPDATE / DELETE / NOOP; its graph variant marks edges invalid.
-- OSWorld has no macOS guest (Ubuntu and Windows only), and its action space has no OPEN_URL or SHELL.
-- OWASP LLM06:2025 is Excessive Agency. "Complete mediation" is a Saltzer and Schroeder principle.
-- TomasuLLM (arXiv:2609.38201) is about out-of-order speculative tool execution in copy-on-write sandboxes, not sandbox fences.
-- "245 local git repos", "30-day history": unsourced.
-
-## 13. References in use
-
-- **ProAgentBench** (arXiv:2602.04482): splits proactive assistance into timing prediction and content generation. Long-term memory improves prediction, and real-world data substantially outperforms synthetic. Used for: the Anticipator score/propose split, and replay on real data instead of a simulator.
-- **ProAgent** (arXiv:2512.06721): tiered, on-demand sensing for proactive agents. Used for: a cheap score gating expensive LLM calls.
-- **Remembrance Agent** (Rhodes, MIT Media Lab): continuous just-in-time retrieval from the user's current context. Prior art for the whole loop.
-- **PrefEval** (arXiv:2502.09597): zero-shot preference following falls below 10% at 10 turns (~3k tokens). Used for: corrections stored as rules, not left in chat history.
-- **Meta Agents Rule of Two** and **CaMeL** (arXiv:2503.18813): untrusted input must not control actions when private data and external communication are present. Used for: the no-send rule, the external query rule, and treating recalled text as data.
-- **Anthropic, Claude Code auto mode**: users accept 93% of permission prompts; the classifier strips assistant text and tool outputs. Used for: no per-action approval prompts; owner review is asynchronous in the queue.
+1. **Test the Connected Spine, Never Disconnected Helpers:**
+   - Every feature must be tested through the actual connected spine (`EventStore` $\to$ `runFunctionalSpine` / HTTP API $\to$ persisted `skypanel_cards` & `.gadget/brief.md` $\to$ `{revise}` & `{go go gadget}` Mode 1 and Mode 2 execution).
+   - Testing a mocked function in isolation while the server or daemon never calls it is a violation of this charter.
+2. **Real Visual & Geometry Assertions for UI (No `6px` Column Collapses):**
+   - Ban `table-layout: fixed` multi-column tables inside narrow containers.
+   - Every Playwright test must assert real rendered bounding boxes (`getBoundingClientRect().width >= 200` on card/text containers, non-overlapping buttons, visible Row 1 icons/label and Row 2 `{revise}`, `{mode: app | agent}`, and `{go go gadget}` controls) across Desktop (`1280×800`) and Mobile (`390×844`) viewports, and save real screenshots inspected via `read_file`.
+3. **Never Weaken a Failing Test:**
+   - When a test fails or times out, fix the bug in the application code—never delete the assertion, widen a tolerance to pass broken output, or rename a label to dodge a layout collision.
+4. **Verify Target & Obey `STOP` Immediately:**
+   - Always check `pwd`, `git remote -v`, and `git diff --stat` before testing or committing.
+   - When the user says `hold`, `stop`, or `just commit`, stop all extra work immediately.
+5. **"Done" Requires Verbatim Proof:**
+   - `npm test`, `node scripts/guard_no_send.mjs`, `node scripts/guard_no_fake_or_mock.mjs`, and `node scripts/guard_acceptance_manifest.mjs` must all exit `0`, followed by `git commit`, `git push`, and reporting the verbatim commit SHA and test output.
