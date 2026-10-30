@@ -21,15 +21,22 @@ import { CalibratedAnticipator } from "../runtime/anticipator.js";
 import { AmbientCatalogDaemon, loadLatestLabelsMap } from "../runtime/daemon.js";
 import { formatReplayTable, runReplay } from "../runtime/replay.js";
 import { FtsEventsSearcher } from "../runtime/searchers.js";
+import {
+  extractSpokenSlotFromEvent,
+  SPOKEN_TRIGGER_PREFIXES,
+} from "../triggers/cosmo_spoken_slots.js";
 import { startWorkbenchServer } from "../web/server.js";
-import { evaluateCeiling } from "./ceiling.js";
+import { evaluateCeiling, keyTokens } from "./ceiling.js";
 import { flag, loadConfig } from "./config.js";
 import { buildEpisodes } from "./episodes.js";
+import { makeEvent } from "./event.js";
 import { formatIngestTable, ingest } from "./ingest.js";
 import { probe } from "./probe.js";
 import { rate, writeReport } from "./report.js";
+import { withSeeks } from "./seek.js";
 import { computeSensitivity } from "./sensitivity.js";
 import { EventStore } from "./store.js";
+import type { EpisodicEvent } from "./types.js";
 
 function checkNode(): void {
   const [major, minor] = process.versions.node.split(".").map(Number) as [number, number];
@@ -338,8 +345,103 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
 
+  if (cmd === "slots") {
+    if (args.includes("--prefixes")) {
+      console.log(
+        JSON.stringify(
+          SPOKEN_TRIGGER_PREFIXES.map((p) => ({
+            id: p.id,
+            label: p.canonicalLabel,
+            socialMode: p.socialMode,
+            whisperExactRate: p.whisperExactRate,
+          })),
+          null,
+          2,
+        ),
+      );
+      return 0;
+    }
+    const sayText = flag(args, "--say");
+    const resolveId = flag(args, "--resolve");
+    const store = new EventStore(cfg.dbPath);
+    try {
+      if (resolveId) {
+        const resolved = store.resolveSpokenSlot(resolveId);
+        console.log(JSON.stringify({ ok: resolved, resolvedSlotId: resolveId }));
+        return resolved ? 0 : 1;
+      }
+      if (sayText) {
+        const nowMs = Date.now();
+        const ev = makeEvent({
+          source: "audio",
+          timestampMs: nowMs,
+          workspacePath: process.cwd(),
+          contentText: `[audio transcript] ${sayText}`,
+          sourceUri: `cli:slots#say-${nowMs}`,
+          metadataJson: JSON.stringify({ kind: "spoken_slot_cli", raw: sayText }),
+        });
+        store.insert(withSeeks([ev]));
+        const recentSensoryRows = store.db
+          .prepare(
+            `SELECT event_id, source, timestamp_ms, workspace_path, content_text, source_uri, metadata_json
+               FROM events
+              WHERE source IN ('screen', 'clipboard')
+              ORDER BY timestamp_ms DESC
+              LIMIT 15`,
+          )
+          .all() as Array<Record<string, unknown>>;
+        const contextPool: EpisodicEvent[] = recentSensoryRows.map((r) => ({
+          eventId: r.event_id as string,
+          source: r.source as EpisodicEvent["source"],
+          timestampMs: Number(r.timestamp_ms),
+          ...(typeof r.workspace_path === "string" ? { workspacePath: r.workspace_path } : {}),
+          contentText: r.content_text as string,
+          sourceUri: r.source_uri as string,
+          metadataJson: r.metadata_json as string,
+        }));
+        const slot = extractSpokenSlotFromEvent(ev, contextPool);
+        if (!slot) {
+          console.error(
+            `No trigger prefix matched in "${sayText}". Start with "Hey Gadget", "Note to self", "Mental note", "FYI", "PSA", "Remind me", "Bookmark", "Lock it in", "VIP", "ASAP", "ADR", or "TBC".`,
+          );
+          return 2;
+        }
+        if (slot.primarySlot === "PROVIDE_RECALL" || slot.allSlots.includes("PROVIDE_RECALL")) {
+          const toks = keyTokens(slot.bodyText, "ASK_AGENT").slice(0, 4);
+          if (toks.length > 0) {
+            try {
+              const ftsMatch = toks.map((t) => `"${t.replace(/"/g, '""')}"`).join(" OR ");
+              const recallRows = store.searchBefore(ftsMatch, slot.timestampMs, 5);
+              slot.recallHits = recallRows.map((rh) => ({
+                eventId: rh.eventId,
+                source: rh.source,
+                timestampMs: rh.timestampMs,
+                sourceUri: rh.sourceUri,
+                quote: rh.snippet,
+              }));
+            } catch {
+              // ignore
+            }
+          }
+        }
+        store.upsertSpokenSlot(slot);
+        console.log(JSON.stringify(slot, null, 2));
+      } else {
+        const slots = store.listSpokenSlots({ limit: 50 });
+        console.log(JSON.stringify(slots, null, 2));
+      }
+    } finally {
+      store.close();
+    }
+    if (sayText) {
+      const daemon = new AmbientCatalogDaemon(cfg, { once: true });
+      await daemon.runProactiveBriefUpdate(process.cwd());
+    }
+    return 0;
+  }
+
   console.error(
-    "usage: npm run mine -- ingest | report [--seed N] [--out DIR] | probe | replay | mcp | web [--port N] | daemon [--once] [--audio] | status | permissions [--prompt] | search <query> | tts | stt | record-audio | capture-screen | capture-clipboard | capture-keys",
+    "usage: npm run mine -- ingest | report [--seed N] [--out DIR] | probe | replay | mcp | web [--port N] | daemon [--once] [--audio] | status | slots [--prefixes | --say <text> | --resolve <id>] | permissions [--prompt] | search <query> | tts | stt | record-audio | capture-screen | capture-clipboard | capture-keys",
   );
   return 2;
 }

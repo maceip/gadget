@@ -1,4 +1,11 @@
 import { DatabaseSync } from "node:sqlite";
+import type {
+  CosmoSlotKind,
+  SpokenSlotContextSnapshot,
+  SpokenSlotRecallHit,
+  SpokenSlotRecord,
+  TriggerSocialMode,
+} from "../triggers/cosmo_spoken_slots.js";
 import { MINER_VERSION } from "./event.js";
 import type { EpisodicEvent, ParseCounts, Seek, Source } from "./types.js";
 
@@ -49,6 +56,26 @@ CREATE TABLE IF NOT EXISTS ingest_counts (
   label       TEXT NOT NULL,
   counts_json TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS spoken_slots (
+  slot_id        TEXT PRIMARY KEY,
+  event_id       TEXT NOT NULL,
+  source         TEXT NOT NULL,
+  timestamp_ms   INTEGER NOT NULL,
+  trigger_id     TEXT NOT NULL,
+  trigger_prefix TEXT NOT NULL,
+  social_mode    TEXT NOT NULL,
+  primary_slot   TEXT NOT NULL,
+  all_slots_json TEXT NOT NULL,
+  raw_text       TEXT NOT NULL,
+  body_text      TEXT NOT NULL,
+  extracted_time TEXT,
+  is_tbc         INTEGER NOT NULL DEFAULT 0,
+  context_json   TEXT NOT NULL DEFAULT '{}',
+  recall_json    TEXT NOT NULL DEFAULT '[]',
+  status         TEXT NOT NULL DEFAULT 'ACTIVE',
+  miner_version  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS spoken_slots_ts ON spoken_slots(timestamp_ms DESC);
 `;
 
 export class EventStore {
@@ -191,6 +218,91 @@ export class EventStore {
       sourceUri: r.source_uri as string,
       snippet: r.snippet as string,
     }));
+  }
+
+  upsertSpokenSlot(slot: SpokenSlotRecord): void {
+    this.db
+      .prepare(
+        `INSERT INTO spoken_slots
+           (slot_id, event_id, source, timestamp_ms, trigger_id, trigger_prefix, social_mode,
+            primary_slot, all_slots_json, raw_text, body_text, extracted_time, is_tbc,
+            context_json, recall_json, status, miner_version)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(slot_id) DO UPDATE SET
+           primary_slot = excluded.primary_slot,
+           all_slots_json = excluded.all_slots_json,
+           extracted_time = excluded.extracted_time,
+           is_tbc = excluded.is_tbc,
+           context_json = excluded.context_json,
+           recall_json = excluded.recall_json,
+           status = excluded.status`,
+      )
+      .run(
+        slot.slotId,
+        slot.eventId,
+        slot.source,
+        slot.timestampMs,
+        slot.triggerId,
+        slot.triggerPrefix,
+        slot.socialMode,
+        slot.primarySlot,
+        JSON.stringify(slot.allSlots),
+        slot.rawText,
+        slot.bodyText,
+        slot.extractedTimeText ?? null,
+        slot.isTimeBoundCommitment ? 1 : 0,
+        JSON.stringify(slot.context),
+        JSON.stringify(slot.recallHits ?? []),
+        slot.status,
+        MINER_VERSION,
+      );
+  }
+
+  listSpokenSlots(opts: { status?: "ACTIVE" | "RESOLVED"; limit?: number } = {}): SpokenSlotRecord[] {
+    try {
+      const limit = opts.limit ?? 50;
+      const rows = opts.status
+        ? (this.db
+            .prepare(
+              `SELECT * FROM spoken_slots WHERE status = ? ORDER BY timestamp_ms DESC LIMIT ?`,
+            )
+            .all(opts.status, limit) as Array<Record<string, unknown>>)
+        : (this.db
+            .prepare(`SELECT * FROM spoken_slots ORDER BY timestamp_ms DESC LIMIT ?`)
+            .all(limit) as Array<Record<string, unknown>>);
+
+      return rows.map((r) => {
+        const extractedTime = typeof r.extracted_time === "string" ? r.extracted_time : undefined;
+        const recallHits = JSON.parse((r.recall_json as string) || "[]") as SpokenSlotRecallHit[];
+        return {
+          slotId: r.slot_id as string,
+          eventId: r.event_id as string,
+          source: r.source as Source,
+          timestampMs: r.timestamp_ms as number,
+          triggerId: r.trigger_id as string,
+          triggerPrefix: r.trigger_prefix as string,
+          socialMode: r.social_mode as TriggerSocialMode,
+          primarySlot: r.primary_slot as CosmoSlotKind,
+          allSlots: JSON.parse((r.all_slots_json as string) || "[]") as CosmoSlotKind[],
+          rawText: r.raw_text as string,
+          bodyText: r.body_text as string,
+          ...(extractedTime ? { extractedTimeText: extractedTime } : {}),
+          isTimeBoundCommitment: Number(r.is_tbc) === 1,
+          context: JSON.parse((r.context_json as string) || "{}") as SpokenSlotContextSnapshot,
+          ...(recallHits.length > 0 ? { recallHits } : {}),
+          status: (r.status as "ACTIVE" | "RESOLVED") ?? "ACTIVE",
+        };
+      });
+    } catch {
+      return [];
+    }
+  }
+
+  resolveSpokenSlot(slotId: string): boolean {
+    const r = this.db
+      .prepare(`UPDATE spoken_slots SET status = 'RESOLVED' WHERE slot_id = ?`)
+      .run(slotId);
+    return Number(r.changes) > 0;
   }
 
   close(): void {

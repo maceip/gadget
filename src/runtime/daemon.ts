@@ -15,6 +15,10 @@ import { withSeeks } from "../miner/seek.js";
 import { EventStore, type StoredEvent } from "../miner/store.js";
 import type { EpisodicEvent, Seek, SeekingEpisode } from "../miner/types.js";
 import { readLabelsCsv } from "../web/server.js";
+import {
+  extractSpokenSlotFromEvent,
+  type SpokenSlotRecord,
+} from "../triggers/cosmo_spoken_slots.js";
 import { OpenChronicleEventDispatcher } from "../triggers/desktop_activity_commitments.js";
 import { computeAdaptiveCadenceMs } from "../triggers/governed_loop_cadence.js";
 import { CalibratedAnticipator, type EpisodeLabel } from "./anticipator.js";
@@ -50,6 +54,14 @@ export interface DaemonStatus {
   inputMonitoringAccess: boolean | null;
   lastKeyCount: number;
   lastAudioTranscript: string | null;
+  activeSpokenSlotsCount?: number;
+  lastSpokenSlot?: {
+    slotId: string;
+    triggerPrefix: string;
+    socialMode: string;
+    primarySlot: string;
+    bodyText: string;
+  } | null;
   countsBySource: Record<string, number>;
   errors: string[];
 }
@@ -198,6 +210,8 @@ export class AmbientCatalogDaemon {
 
     const store = new EventStore(this.cfg.dbPath);
     let countsBySource: Record<string, number> = {};
+    let activeSpokenSlotsCount = 0;
+    let lastSpokenSlot: DaemonStatus["lastSpokenSlot"] = null;
     try {
       const batch: EpisodicEvent[] = [];
       const zshRaw = this.readIncrementalTail(this.cfg.zshHook, 0);
@@ -228,6 +242,66 @@ export class AmbientCatalogDaemon {
       if (batch.length > 0) {
         const added = store.insert(withSeeks(batch));
         this.insertedEventsTotal += added;
+
+        // Extract any Cosmo spoken commitments / slots from newly captured audio, keyboard, or zsh events
+        const recentSensoryRows = store.db
+          .prepare(
+            `SELECT event_id, source, timestamp_ms, workspace_path, content_text, source_uri, metadata_json
+               FROM events
+              WHERE source IN ('screen', 'clipboard')
+              ORDER BY timestamp_ms DESC
+              LIMIT 15`,
+          )
+          .all() as Array<Record<string, unknown>>;
+        const contextPool: EpisodicEvent[] = [
+          ...batch,
+          ...recentSensoryRows.map((r) => ({
+            eventId: r.event_id as string,
+            source: r.source as EpisodicEvent["source"],
+            timestampMs: Number(r.timestamp_ms),
+            ...(typeof r.workspace_path === "string" ? { workspacePath: r.workspace_path } : {}),
+            contentText: r.content_text as string,
+            sourceUri: r.source_uri as string,
+            metadataJson: r.metadata_json as string,
+          })),
+        ];
+
+        for (const ev of batch) {
+          const slot = extractSpokenSlotFromEvent(ev, contextPool);
+          if (slot) {
+            if (slot.primarySlot === "PROVIDE_RECALL" || slot.allSlots.includes("PROVIDE_RECALL")) {
+              const toks = keyTokens(slot.bodyText, "ASK_AGENT").slice(0, 4);
+              if (toks.length > 0) {
+                try {
+                  const ftsMatch = toks.map((t) => `"${t.replace(/"/g, '""')}"`).join(" OR ");
+                  const recallRows = store.searchBefore(ftsMatch, slot.timestampMs, 5);
+                  slot.recallHits = recallRows.map((rh) => ({
+                    eventId: rh.eventId,
+                    source: rh.source,
+                    timestampMs: rh.timestampMs,
+                    sourceUri: rh.sourceUri,
+                    quote: rh.snippet,
+                  }));
+                } catch {
+                  // ignore FTS syntax edge cases
+                }
+              }
+            }
+            store.upsertSpokenSlot(slot);
+          }
+        }
+      }
+
+      const activeSlots = store.listSpokenSlots({ status: "ACTIVE", limit: 25 });
+      activeSpokenSlotsCount = activeSlots.length;
+      if (activeSlots[0]) {
+        lastSpokenSlot = {
+          slotId: activeSlots[0].slotId,
+          triggerPrefix: activeSlots[0].triggerPrefix,
+          socialMode: activeSlots[0].socialMode,
+          primarySlot: activeSlots[0].primarySlot,
+          bodyText: activeSlots[0].bodyText,
+        };
       }
 
       const rows = store.db
@@ -263,6 +337,8 @@ export class AmbientCatalogDaemon {
       inputMonitoringAccess,
       lastKeyCount,
       lastAudioTranscript,
+      activeSpokenSlotsCount,
+      lastSpokenSlot,
       countsBySource,
       errors,
     };
@@ -342,8 +418,14 @@ export class AmbientCatalogDaemon {
       };
       const proposals = anticipator.propose(ctx);
       const sensoryQueries = this.extractLiveSensoryQueries(store, nowMs);
-      const queryList = [...new Set([...proposals.map((p) => p.query), ...sensoryQueries])].slice(0, 8);
-      if (queryList.length === 0) return 0;
+      const activeSlots: SpokenSlotRecord[] = store.listSpokenSlots({ status: "ACTIVE", limit: 10 });
+      const slotQueries: string[] = [];
+      for (const s of activeSlots) {
+        const toks = keyTokens(s.bodyText, "ASK_AGENT").filter((t) => t.length >= 4);
+        if (toks.length >= 2) slotQueries.push(toks.slice(0, 2).join(" "));
+      }
+      const queryList = [...new Set([...proposals.map((p) => p.query), ...sensoryQueries, ...slotQueries])].slice(0, 8);
+      if (queryList.length === 0 && activeSlots.length === 0) return 0;
 
       const searcher = new FtsEventsSearcher(store, workspacePath);
       const surfacer = new VerifiedSurfacer(store);
@@ -357,14 +439,16 @@ export class AmbientCatalogDaemon {
         }
       }
       const decision = surfacer.decide(ctx, allHits);
-      if (decision.action !== "SURFACE") return 0;
-
-      const { accepted } = surfacer.filterSurfacableHits(ctx, allHits);
-      if (accepted.length === 0) return 0;
+      const { accepted } = decision.action === "SURFACE" ? surfacer.filterSurfacableHits(ctx, allHits) : { accepted: [] };
+      if (accepted.length === 0 && activeSlots.length === 0) return 0;
 
       const sink = new BriefWorkspaceSink(store);
-      await sink.write(workspacePath, accepted, decision.reason);
-      return accepted.length;
+      const reason =
+        accepted.length > 0
+          ? decision.reason
+          : `Surfacing ${activeSlots.length} active spoken commitment/slot(s)`;
+      await sink.write(workspacePath, accepted, reason, activeSlots);
+      return accepted.length + activeSlots.length;
     } finally {
       store.close();
     }

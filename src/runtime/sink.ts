@@ -7,6 +7,7 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, lstatSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { EventStore } from "../miner/store.js";
+import type { SpokenSlotRecord } from "../triggers/cosmo_spoken_slots.js";
 import type { Hit, WorkspaceSink } from "./types.js";
 import { hitToClaim, verifyClaim } from "./verify.js";
 
@@ -28,7 +29,44 @@ export function formatUntrustedDataBlock(hit: Hit, index: number): string {
     .join("\n");
 }
 
-export function renderSidecarBrief(hits: Hit[], reason: string, generatedAt = new Date()): string {
+export function formatSpokenSlotBlock(slot: SpokenSlotRecord, index: number): string {
+  const safeBody = slot.bodyText
+    .split("\n")
+    .map((line) => `> ${line}`)
+    .join("\n");
+  const lines: Array<string | null> = [
+    `### [Slot ${index + 1}] \`${slot.primarySlot}\` via \`${slot.triggerPrefix}\` (\`${slot.socialMode}\`)`,
+    `- Slot ID: \`${slot.slotId}\` | Event ID: \`${slot.eventId}\` | Captured: \`${new Date(slot.timestampMs).toISOString()}\``,
+    `- Active Heads: \`${slot.allSlots.join(", ")}\`${slot.isTimeBoundCommitment ? " (**TBC**)" : ""}`,
+    slot.extractedTimeText ? `- Extracted Deadline / Time: \`${slot.extractedTimeText.replace(/`/g, "'")}\`` : null,
+    slot.context.activeApp || slot.context.windowTitle
+      ? `- Screen Context at Utterance: App=\`${(slot.context.activeApp ?? "unknown").replace(/`/g, "'")}\`, Window=\`${(slot.context.windowTitle ?? "").replace(/`/g, "'")}\``
+      : null,
+    slot.context.screenSnippet
+      ? `- Visible Screen OCR Snippet: \`${slot.context.screenSnippet.slice(0, 140).replace(/`/g, "'")}\``
+      : null,
+    "",
+    "```untrusted-quote",
+    safeBody,
+    "```",
+  ];
+  if (slot.recallHits && slot.recallHits.length > 0) {
+    lines.push("", "**Matched Recall Hits:**");
+    for (const rh of slot.recallHits.slice(0, 3)) {
+      lines.push(
+        `- \`${rh.sourceUri.replace(/`/g, "'")}\` (${new Date(rh.timestampMs).toISOString().slice(0, 10)}): \`${rh.quote.replace(/\s+/g, " ").slice(0, 160).replace(/`/g, "'")}\``,
+      );
+    }
+  }
+  return lines.filter((l): l is string => l !== null).join("\n");
+}
+
+export function renderSidecarBrief(
+  hits: Hit[],
+  reason: string,
+  generatedAt = new Date(),
+  spokenSlots: SpokenSlotRecord[] = [],
+): string {
   const lines: string[] = [
     "# gadget ambient recall brief (untrusted quoted data)",
     "",
@@ -39,6 +77,12 @@ export function renderSidecarBrief(hits: Hit[], reason: string, generatedAt = ne
     `- Surfaced reason: ${reason.replace(/\n/g, " ")}`,
     "",
   ];
+  if (spokenSlots.length > 0) {
+    lines.push("## Active Spoken Commitments & Gatekeeper Slots", "");
+    spokenSlots.forEach((slot, idx) => {
+      lines.push(formatSpokenSlotBlock(slot, idx), "");
+    });
+  }
   hits.forEach((h, idx) => {
     lines.push(formatUntrustedDataBlock(h, idx), "");
   });
@@ -67,7 +111,12 @@ export class BriefWorkspaceSink implements WorkspaceSink {
     private readonly asOfMsProvider: () => number = () => Date.now(),
   ) {}
 
-  async write(workspacePath: string, hits: Hit[], reason: string): Promise<void> {
+  async write(
+    workspacePath: string,
+    hits: Hit[],
+    reason: string,
+    spokenSlots: SpokenSlotRecord[] = [],
+  ): Promise<void> {
     const resolvedWorkspace = resolve(workspacePath);
     const gadgetDir = join(resolvedWorkspace, ".gadget");
     const briefPath = join(gadgetDir, "brief.md");
@@ -94,7 +143,7 @@ export class BriefWorkspaceSink implements WorkspaceSink {
     }
 
     mkdirSync(gadgetDir, { recursive: true, mode: 0o700 });
-    const body = renderSidecarBrief(verifiedHits, reason, new Date(asOfMs));
+    const body = renderSidecarBrief(verifiedHits, reason, new Date(asOfMs), spokenSlots);
     writeFileSync(briefPath, body, { mode: 0o600 });
     chmodSync(briefPath, 0o600);
   }
